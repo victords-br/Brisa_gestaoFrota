@@ -33,6 +33,12 @@
 .warehouse-kpi i { position: absolute; right: 1rem; top: 1rem; color: var(--warehouse-green); opacity: 0.18; font-size: 2rem; }
 
 .warehouse-panel { background: #fff; border: 1px solid var(--warehouse-line); border-radius: 7px; padding: 1.1rem 1.2rem; }
+.warehouse-release-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 0.85rem; }
+.warehouse-release-card { min-width: 0; border: 1px solid var(--warehouse-line); border-radius: 6px; padding: 1rem; }
+.warehouse-release-card h3 { margin: 0; font-size: 1rem; }
+.warehouse-release-items { margin: 0.75rem 0; color: #53645b; font-size: 0.84rem; }
+.warehouse-release-form { border-top: 1px solid var(--warehouse-line); padding-top: 0.85rem; }
+.warehouse-release-form .form-feedback { display: block; margin-top: 0.5rem; }
 .warehouse-forms, .warehouse-reports { margin-top: 1rem; }
 .warehouse-panel .form-label { color: #43564e; font-size: 0.79rem; font-weight: 700; margin-bottom: 0.35rem; }
 .warehouse-panel .form-control, .warehouse-panel .form-select { min-height: 40px; border-color: #d7e0da; border-radius: 5px; font-size: 0.88rem; }

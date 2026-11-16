@@ -65,6 +65,37 @@ CREATE TABLE IF NOT EXISTS public.itens_ordem_servico (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE public.itens_ordem_servico
+  ADD COLUMN IF NOT EXISTS quantidade_utilizada numeric(12, 3) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS mecanico_id uuid REFERENCES public.funcionarios (id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS liberado_por uuid REFERENCES auth.users (id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS liberado_em timestamptz,
+  ADD COLUMN IF NOT EXISTS confirmado_por uuid REFERENCES auth.users (id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS confirmado_em timestamptz;
+
+UPDATE public.itens_ordem_servico
+SET quantidade_utilizada = quantidade,
+    liberado_em = created_at,
+    confirmado_em = created_at
+WHERE liberado_em IS NULL AND confirmado_em IS NULL;
+
+ALTER TABLE public.itens_ordem_servico
+  ALTER COLUMN quantidade_utilizada SET DEFAULT 0;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'itens_os_quantidade_utilizada_check'
+      AND conrelid = 'public.itens_ordem_servico'::regclass
+  ) THEN
+    ALTER TABLE public.itens_ordem_servico
+      ADD CONSTRAINT itens_os_quantidade_utilizada_check
+      CHECK (quantidade_utilizada >= 0 AND quantidade_utilizada <= quantidade);
+  END IF;
+END;
+$$;
+
 CREATE TABLE IF NOT EXISTS public.movimentacoes_estoque (
   id bigserial PRIMARY KEY,
   peca_id bigint NOT NULL REFERENCES public.pecas (id) ON DELETE RESTRICT,
@@ -356,10 +387,11 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.finalizar_ordem_servico(
+DROP FUNCTION IF EXISTS public.finalizar_ordem_servico(uuid, uuid, text, jsonb);
+
+CREATE OR REPLACE FUNCTION public.registrar_saida_estoque_os(
   p_ordem_id uuid,
   p_mecanico_id uuid,
-  p_obs text,
   p_itens jsonb DEFAULT '[]'::jsonb
 )
 RETURNS void
@@ -370,32 +402,30 @@ AS $$
 DECLARE
   v_role text;
   v_status text;
+  v_mecanico_atual uuid;
   v_mecanico_nome text;
-  v_item record;
   v_saldo numeric(12, 3);
   v_custo_medio numeric(14, 4);
+  v_item record;
 BEGIN
   SELECT role INTO v_role
   FROM public.profiles
   WHERE id = auth.uid();
 
   IF COALESCE(v_role, '') NOT IN ('admin', 'manutencao') THEN
-    RAISE EXCEPTION 'Sem permissão para concluir ordem de serviço';
+    RAISE EXCEPTION 'Sem permissão para liberar peças para ordem de serviço';
   END IF;
   IF jsonb_typeof(p_itens) <> 'array' THEN
     RAISE EXCEPTION 'A lista de peças deve ser um array';
   END IF;
 
-  SELECT status INTO v_status
+  SELECT status, mecanico_id INTO v_status, v_mecanico_atual
   FROM public.ordens_servico
   WHERE id = p_ordem_id
   FOR UPDATE;
 
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Ordem de serviço não encontrada';
-  END IF;
-  IF v_status <> 'Pendente' THEN
-    RAISE EXCEPTION 'Somente OS liberadas pela portaria podem ser concluídas';
+  IF NOT FOUND OR v_status <> 'Pendente' THEN
+    RAISE EXCEPTION 'Ordem não encontrada ou já concluída';
   END IF;
 
   SELECT nome_funcionario INTO v_mecanico_nome
@@ -404,6 +434,9 @@ BEGIN
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Selecione um mecânico ativo no cadastro de funcionários';
+  END IF;
+  IF v_mecanico_atual IS NOT NULL AND v_mecanico_atual <> p_mecanico_id THEN
+    RAISE EXCEPTION 'A OS já possui peças liberadas para outro mecânico';
   END IF;
 
   FOR v_item IN
@@ -432,9 +465,11 @@ BEGIN
     END IF;
 
     INSERT INTO public.itens_ordem_servico (
-      ordem_servico_id, peca_id, quantidade, custo_unitario
+      ordem_servico_id, peca_id, quantidade, quantidade_utilizada, custo_unitario,
+      mecanico_id, liberado_por, liberado_em
     ) VALUES (
-      p_ordem_id, v_item.peca_id, v_item.quantidade, v_custo_medio
+      p_ordem_id, v_item.peca_id, v_item.quantidade, 0, v_custo_medio,
+      p_mecanico_id, auth.uid(), now()
     );
 
     UPDATE public.pecas
@@ -446,14 +481,112 @@ BEGIN
       peca_id, tipo, quantidade, custo_unitario, ordem_servico_id, usuario_id, observacao
     ) VALUES (
       v_item.peca_id, 'saida', v_item.quantidade, v_custo_medio,
-      p_ordem_id, auth.uid(), 'Consumo na ordem de serviço'
+      p_ordem_id, auth.uid(), 'Peça liberada para mecânico na ordem de serviço'
     );
   END LOOP;
 
   UPDATE public.ordens_servico
+  SET mecanico_id = p_mecanico_id,
+      mecanico = v_mecanico_nome
+  WHERE id = p_ordem_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.finalizar_ordem_servico(
+  p_ordem_id uuid,
+  p_obs text,
+  p_itens jsonb DEFAULT '[]'::jsonb
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_role text;
+  v_status text;
+  v_item record;
+  v_mecanico_id uuid;
+  v_quantidade_utilizada numeric(12, 3);
+  v_quantidade_devolvida numeric(12, 3);
+BEGIN
+  SELECT role INTO v_role
+  FROM public.profiles
+  WHERE id = auth.uid();
+
+  IF COALESCE(v_role, '') NOT IN ('admin', 'manutencao') THEN
+    RAISE EXCEPTION 'Sem permissão para concluir ordem de serviço';
+  END IF;
+  IF jsonb_typeof(p_itens) <> 'array' THEN
+    RAISE EXCEPTION 'A lista de peças deve ser um array';
+  END IF;
+
+  SELECT status, mecanico_id INTO v_status, v_mecanico_id
+  FROM public.ordens_servico
+  WHERE id = p_ordem_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Ordem de serviço não encontrada';
+  END IF;
+  IF v_status <> 'Pendente' THEN
+    RAISE EXCEPTION 'Somente OS liberadas pela portaria podem ser concluídas';
+  END IF;
+  IF v_mecanico_id IS NULL THEN
+    RAISE EXCEPTION 'Associe um mecânico à OS no Almoxarifado antes de concluir';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_itens) AS item
+    LEFT JOIN public.itens_ordem_servico liberado
+      ON liberado.id = (item->>'item_id')::bigint
+     AND liberado.ordem_servico_id = p_ordem_id
+    WHERE liberado.id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'A confirmação contém peça não liberada para esta OS';
+  END IF;
+
+  FOR v_item IN
+    SELECT id, peca_id, quantidade, custo_unitario
+    FROM public.itens_ordem_servico
+    WHERE ordem_servico_id = p_ordem_id
+    ORDER BY id
+    FOR UPDATE
+  LOOP
+    SELECT COALESCE(sum((item->>'quantidade_utilizada')::numeric), 0)
+    INTO v_quantidade_utilizada
+    FROM jsonb_array_elements(p_itens) AS item
+    WHERE (item->>'item_id')::bigint = v_item.id;
+
+    IF v_quantidade_utilizada < 0 OR v_quantidade_utilizada > v_item.quantidade THEN
+      RAISE EXCEPTION 'Quantidade utilizada inválida para o item %', v_item.id;
+    END IF;
+
+    v_quantidade_devolvida := v_item.quantidade - v_quantidade_utilizada;
+    UPDATE public.itens_ordem_servico
+    SET quantidade_utilizada = v_quantidade_utilizada,
+        confirmado_por = auth.uid(),
+        confirmado_em = now()
+    WHERE id = v_item.id;
+
+    IF v_quantidade_devolvida > 0 THEN
+      UPDATE public.pecas
+      SET saldo_estoque = saldo_estoque + v_quantidade_devolvida,
+          updated_at = now()
+      WHERE id = v_item.peca_id;
+
+      INSERT INTO public.movimentacoes_estoque (
+        peca_id, tipo, quantidade, custo_unitario, ordem_servico_id, usuario_id, observacao
+      ) VALUES (
+        v_item.peca_id, 'entrada', v_quantidade_devolvida, v_item.custo_unitario,
+        p_ordem_id, auth.uid(), 'Devolução de peça não utilizada na ordem de serviço'
+      );
+    END IF;
+  END LOOP;
+
+  UPDATE public.ordens_servico
   SET status = 'Concluída',
-      mecanico_id = p_mecanico_id,
-      mecanico = v_mecanico_nome,
       obs_manutencao = p_obs,
       data_conclusao = now()
   WHERE id = p_ordem_id;
@@ -464,9 +597,11 @@ REVOKE ALL ON FUNCTION public.registrar_entrada_estoque(bigint, numeric, numeric
 REVOKE ALL ON FUNCTION public.definir_funcionario_mecanico(uuid, boolean) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.listar_checklists_portaria() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.validar_checklist_portaria(bigint, boolean, uuid, text, text, text) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.finalizar_ordem_servico(uuid, uuid, text, jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.registrar_saida_estoque_os(uuid, uuid, jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.finalizar_ordem_servico(uuid, text, jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.registrar_entrada_estoque(bigint, numeric, numeric, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.definir_funcionario_mecanico(uuid, boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.listar_checklists_portaria() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.validar_checklist_portaria(bigint, boolean, uuid, text, text, text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.finalizar_ordem_servico(uuid, uuid, text, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.registrar_saida_estoque_os(uuid, uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.finalizar_ordem_servico(uuid, text, jsonb) TO authenticated;

@@ -290,7 +290,7 @@
 
     const { data, error } = await window.db
       .from('ordens_servico')
-      .select('*, veiculos(placa, modelo), grupo_problemas(nome), motorista:funcionarios!fk_ordens_servico_funcionario(cod_funcionario, nome_funcionario), mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), itens_ordem_servico(quantidade, custo_total, pecas(nome, unidade))')
+      .select('*, veiculos(placa, modelo), grupo_problemas(nome), motorista:funcionarios!fk_ordens_servico_funcionario(cod_funcionario, nome_funcionario), mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), itens_ordem_servico(id, quantidade, quantidade_utilizada, custo_unitario, pecas(nome, unidade))')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -314,9 +314,9 @@
       const isConcluida = os.status === 'Concluída';
       const prioridade = os.prioridade || 'Normal';
       const itens = os.itens_ordem_servico || [];
-      const custoPecas = itens.reduce((total, item) => total + Number(item.custo_total || 0), 0);
+      const custoPecas = itens.reduce((total, item) => total + Number(item.quantidade_utilizada || 0) * Number(item.custo_unitario || 0), 0);
       const itensHtml = itens.length
-        ? `${itens.map(item => `${escapeHTML(item.pecas?.nome || 'Peça')} × ${Number(item.quantidade).toLocaleString('pt-BR')}`).join('<br>')}<br><strong>${custoPecas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>`
+        ? `${itens.map(item => `${escapeHTML(item.pecas?.nome || 'Peça')} · liberada ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')} · usada ${Number(item.quantidade_utilizada || 0).toLocaleString('pt-BR')}`).join('<br>')}<br><strong>Custo confirmado: ${custoPecas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>`
         : '—';
       const dataConclusao = os.data_conclusao ? new Date(os.data_conclusao).toLocaleString('pt-BR') : '—';
       const mecanicoNome = os.mecanico_funcionario?.nome_funcionario || os.mecanico || '—';
@@ -350,6 +350,7 @@
           <div class="ops-card-facts">
             <div class="ops-card-fact"><span class="ops-card-label">Motorista</span><strong>${escapeHTML(motorista)}</strong></div>
             <div class="ops-card-fact"><span class="ops-card-label">Grupo</span><strong>${escapeHTML(grupoNome)}</strong></div>
+            <div class="ops-card-fact"><span class="ops-card-label">Mecânico</span><strong>${escapeHTML(mecanicoNome)}</strong></div>
           </div>
           <p class="ops-card-description">${escapeHTML(os.descricao)}</p>
           <div class="ops-card-parts"><span class="ops-card-label">Peças e custo</span>${itensHtml}</div>
@@ -391,29 +392,29 @@
 
   // Função global para abrir modal de conclusão de OS
   window.abrirModalConcluirOS = async function(osId, placa) {
-    // Remove modal anterior se existir
     const modalAntigo = document.getElementById('modal-concluir-os');
     if (modalAntigo) modalAntigo.remove();
 
-    const [{ data: mecanicos, error: erroMecanicos }, { data: pecas, error: erroPecas }] = await Promise.all([
-      window.db.from('funcionarios').select('id, cod_funcionario, nome_funcionario').eq('is_mecanico', true).order('nome_funcionario'),
-      window.db.from('pecas').select('id, codigo, nome, unidade, saldo_estoque').eq('ativo', true).gt('saldo_estoque', 0).order('nome')
-    ]);
-    if (erroMecanicos || erroPecas) {
-      alert('Não foi possível carregar mecânicos e peças. Confira se a migração do almoxarifado foi aplicada.');
+    const { data: ordem, error } = await window.db
+      .from('ordens_servico')
+      .select('mecanico_id, mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), itens_ordem_servico(id, quantidade, quantidade_utilizada, custo_unitario, pecas(nome, unidade))')
+      .eq('id', osId)
+      .single();
+    if (error) {
+      alert('Não foi possível carregar as peças liberadas para esta OS: ' + error.message);
       return;
     }
-    if (!mecanicos?.length) {
-      alert('Cadastre funcionários como mecânicos antes de concluir uma OS.');
+    if (!ordem.mecanico_id) {
+      alert('Associe o mecânico responsável e libere as peças pelo Almoxarifado antes de concluir esta OS.');
       return;
     }
 
-    const mecanicoOptions = mecanicos.map(mecanico =>
-      `<option value="${escapeHTML(mecanico.id)}">${escapeHTML(mecanico.nome_funcionario)} (${escapeHTML(mecanico.cod_funcionario)})</option>`
-    ).join('');
-    const pecaOptions = (pecas || []).map(peca =>
-      `<option value="${escapeHTML(peca.id)}" data-saldo="${escapeHTML(peca.saldo_estoque)}">${escapeHTML(peca.codigo)} · ${escapeHTML(peca.nome)} (${Number(peca.saldo_estoque).toLocaleString('pt-BR')} ${escapeHTML(peca.unidade)})</option>`
-    ).join('');
+    const itensLiberados = ordem.itens_ordem_servico || [];
+    const itensHtml = itensLiberados.length ? itensLiberados.map(item => `
+      <div class="row g-2 align-items-center mb-2 linha-confirmacao-peca" data-item-id="${escapeHTML(item.id)}">
+        <div class="col-7"><strong>${escapeHTML(item.pecas?.nome || 'Peça')}</strong><small class="d-block text-muted">Liberada: ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')}</small></div>
+        <div class="col-5"><label class="visually-hidden" for="usada-${escapeHTML(item.id)}">Quantidade utilizada</label><input id="usada-${escapeHTML(item.id)}" class="form-control quantidade-utilizada" type="number" min="0" max="${escapeHTML(item.quantidade)}" step="0.001" value="0" aria-label="Quantidade utilizada"></div>
+      </div>`).join('') : '<p class="text-muted mb-0">Nenhuma peça liberada para esta OS. Ela será concluída sem consumo de peças.</p>';
 
     const modalHtml = `
       <div class="modal fade" id="modal-concluir-os" tabindex="-1">
@@ -426,20 +427,19 @@
             <div class="modal-body">
               <form id="form-concluir-os">
                 <div class="mb-3">
-                  <label class="form-label fw-bold" for="mecanico-id">Mecânico responsável</label>
-                  <select class="form-select" id="mecanico-id" required><option value="">Selecione o mecânico...</option>${mecanicoOptions}</select>
+                  <span class="form-label fw-bold d-block">Mecânico responsável</span>
+                  <strong>${escapeHTML(ordem.mecanico_funcionario?.nome_funcionario || '—')}</strong>
                 </div>
                 <div class="mb-3">
                   <label class="form-label fw-bold">Observações do Reparo</label>
                   <textarea class="form-control" id="mecanico-obs" rows="3" placeholder="Peças trocadas, serviço realizado..."></textarea>
                 </div>
                 <div class="mb-2 d-flex justify-content-between align-items-center">
-                  <label class="form-label fw-bold mb-0">Peças utilizadas</label>
-                  <button type="button" class="btn btn-sm btn-outline-primary" id="btn-adicionar-peca" ${pecaOptions ? '' : 'disabled'}><i class="bi bi-plus-lg me-1"></i>Adicionar peça</button>
+                  <label class="form-label fw-bold mb-0">Confirmar quantidade utilizada</label>
                 </div>
-                <div id="itens-pecas-os" class="d-flex flex-column gap-2"></div>
-                ${pecaOptions ? '' : '<small class="text-muted d-block mb-3">Não há peças com saldo disponível.</small>'}
-                <button type="submit" class="btn btn-success w-100 fw-bold mt-3" id="btn-concluir-os">Salvar e Concluir OS</button>
+                <p class="small text-muted">O que não foi utilizado será devolvido ao estoque.</p>
+                <div id="itens-pecas-os">${itensHtml}</div>
+                <button type="submit" class="btn btn-success w-100 fw-bold mt-3" id="btn-concluir-os">Confirmar uso e concluir OS</button>
               </form>
             </div>
           </div>
@@ -452,42 +452,27 @@
     const modalBS = new bootstrap.Modal(modalEl);
     modalBS.show();
 
-    const listaPecas = document.getElementById('itens-pecas-os');
-    document.getElementById('btn-adicionar-peca').addEventListener('click', () => {
-      const linha = document.createElement('div');
-      linha.className = 'row g-2 align-items-center linha-peca-os';
-      linha.innerHTML = `
-        <div class="col-7"><select class="form-select select-peca-os"><option value="">Selecione a peça...</option>${pecaOptions}</select></div>
-        <div class="col-4"><input class="form-control quantidade-peca-os" type="number" min="0.001" step="0.001" placeholder="Qtd."></div>
-        <div class="col-1"><button type="button" class="btn btn-outline-danger btn-sm remover-peca-os" aria-label="Remover peça"><i class="bi bi-x-lg"></i></button></div>`;
-      linha.querySelector('.remover-peca-os').addEventListener('click', () => linha.remove());
-      listaPecas.appendChild(linha);
-    });
-
     document.getElementById('form-concluir-os').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const mecanicoId = document.getElementById('mecanico-id').value;
       const obs = document.getElementById('mecanico-obs').value.trim();
-      const itens = [];
-      for (const linha of listaPecas.querySelectorAll('.linha-peca-os')) {
-        const pecaId = linha.querySelector('.select-peca-os').value;
-        const quantidadeInput = linha.querySelector('.quantidade-peca-os');
-        const quantidade = Number(quantidadeInput.value);
-        if (!pecaId && !quantidadeInput.value) continue;
-        const saldo = Number(linha.querySelector('.select-peca-os').selectedOptions[0]?.dataset.saldo || 0);
-        if (!pecaId || !Number.isFinite(quantidade) || quantidade <= 0 || quantidade > saldo) {
-          alert('Selecione uma peça e informe uma quantidade válida, dentro do saldo disponível.');
+      const itens = [...document.querySelectorAll('#itens-pecas-os .linha-confirmacao-peca')].map(linha => ({
+        item_id: Number(linha.dataset.itemId),
+        quantidade_utilizada: Number(linha.querySelector('.quantidade-utilizada').value)
+      }));
+      for (const item of itens) {
+        const linha = document.querySelector(`[data-item-id="${item.item_id}"]`);
+        const limite = Number(linha.querySelector('.quantidade-utilizada').max);
+        if (!Number.isFinite(item.quantidade_utilizada) || item.quantidade_utilizada < 0 || item.quantidade_utilizada > limite) {
+          alert('Informe uma quantidade utilizada válida, sem ultrapassar o que foi liberado.');
           return;
         }
-        itens.push({ peca_id: Number(pecaId), quantidade });
       }
 
       const botao = document.getElementById('btn-concluir-os');
       botao.disabled = true;
-      botao.textContent = 'Salvando consumo e concluindo...';
+      botao.textContent = 'Confirmando uso e concluindo...';
       const { error } = await window.db.rpc('finalizar_ordem_servico', {
         p_ordem_id: osId,
-        p_mecanico_id: mecanicoId,
         p_obs: obs,
         p_itens: itens
       });
@@ -495,7 +480,7 @@
       if (error) {
         alert('Erro ao concluir OS: ' + error.message);
         botao.disabled = false;
-        botao.textContent = 'Salvar e Concluir OS';
+        botao.textContent = 'Confirmar uso e concluir OS';
         return;
       }
 
