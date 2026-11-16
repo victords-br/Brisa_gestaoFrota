@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html data-bs-theme="light" lang="pt-br">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <title>Brisa Transporte — Checklist</title>
+    <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+    <link rel="manifest" href="manifest.json" crossorigin="use-credentials">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css">
+    <link rel="stylesheet" href="assets/css/styles.css">
+    <link rel="stylesheet" href="assets/css/brand.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
+<body>
+    <div class="container">
+        <div class="card card-checklist">
+            <div class="header-app">
+                <div class="brand-lockup brand-lockup-checklist">
+                    <img class="brand-logo" src="assets/brisa-logo.svg" alt="">
+                    <span class="brand-name"><strong>Brisa Transporte</strong><small>CHECKLIST DA FROTA</small></span>
+                </div>
+                <small id="nome-motorista">Carregando...</small>
+            </div>
+            <div class="card-body p-4">
+                <form id="form-checklist">
+                    <div class="mb-3"><label class="form-label fw-bold">Veículo</label><select class="form-select" id="veiculo" required="">
+                            <option value="">Carregando veículos...</option>
+                        </select></div>
+                    <div class="mb-3"><label class="form-label fw-bold">Itens de verificação</label>
+                        <div class="border rounded p-3" id="itens-checklist"></div>
+                    </div>
+                    <div class="mb-3"><label class="form-label fw-bold">Observações</label><textarea class="form-control" id="observacoes" placeholder="Descreva problemas ou observações gerais..." rows="3"></textarea></div>
+                    <div class="mb-3"><label class="form-label fw-bold">Fotos</label><input class="form-control" type="file" accept="image/*" id="fotos" multiple="">
+                        <div id="preview-fotos" class="fotos-preview"></div>
+                    </div><button class="btn btn-success w-100 py-2" type="submit" id="btn-enviar"> Enviar Checklist </button>
+                    <div class="text-center mt-3" id="msg"></div>
+                </form>
+                <hr class="my-4"><button class="btn btn-outline-secondary w-100" id="btn-sair"> Sair </button>
+            </div>
+        </div>
+    </div>
+    <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+    <script src="assets/js/checklist.js"></script>
+    <script src="assets/js/supabase-config.js"></script>
+</body>
+
+</html>

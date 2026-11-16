@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 768" role="img" aria-labelledby="title">
+  <title id="title">Brisa</title>
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0871bd"/>
+      <stop offset="1" stop-color="#034b91"/>
+    </linearGradient>
+  </defs>
+  <rect width="768" height="768" fill="url(#blue)"/>
+  <text x="384" y="414" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="184" font-style="italic" font-weight="800" letter-spacing="-8" text-anchor="middle">BRISA</text>
+  <path d="M116 465c95 30 180 33 263 18 115-21 189-15 274 24-94-66-180-84-277-65-84 16-168 19-260 23Z" fill="#fff"/>
+  <path d="M122 485c105 52 208 59 310 36 83-19 147-18 221 3-88 3-147 24-222 37-118 21-219 4-309-76Z" fill="#fff"/>
+</svg>

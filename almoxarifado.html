@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-br" data-bs-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Almoxarifado — Brisa Transporte</title>
+  <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <link rel="stylesheet" href="assets/css/brand.css">
+  <link rel="stylesheet" href="assets/css/warehouse.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="warehouse-page">
+  <nav class="navbar navbar-expand-lg warehouse-nav">
+    <div class="container-fluid">
+      <a class="navbar-brand brand-lockup" href="dashboard.html" aria-label="Brisa Transporte, início">
+        <img class="brand-logo" src="assets/brisa-logo.svg" alt="">
+        <span class="brand-name"><strong>Brisa Transporte</strong><small>GESTÃO DE FROTA</small></span>
+      </a>
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-sm btn-outline-secondary" href="dashboard.html"><i class="bi bi-wrench-adjustable me-1"></i>Manutenção</a>
+        <button class="btn btn-sm btn-danger" id="btn-sair" title="Sair"><i class="bi bi-box-arrow-right"></i><span class="ms-1">Sair</span></button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container-fluid warehouse-shell">
+    <header class="warehouse-heading">
+      <div>
+        <p class="warehouse-eyebrow">OPERAÇÕES / ESTOQUE</p>
+        <h1>Almoxarifado</h1>
+      </div>
+      <div class="warehouse-live"><span></span>Atualizado agora</div>
+    </header>
+
+    <section class="row g-3 warehouse-kpis" aria-label="Resumo do estoque">
+      <div class="col-12 col-md-4"><article class="warehouse-kpi"><span>Peças cadastradas</span><strong id="kpi-pecas">—</strong><i class="bi bi-box-seam"></i></article></div>
+      <div class="col-12 col-md-4"><article class="warehouse-kpi"><span>Abaixo do mínimo</span><strong id="kpi-baixo">—</strong><i class="bi bi-exclamation-triangle"></i></article></div>
+      <div class="col-12 col-md-4"><article class="warehouse-kpi"><span>Valor em estoque</span><strong id="kpi-valor">—</strong><i class="bi bi-currency-dollar"></i></article></div>
+    </section>
+
+    <section class="row g-3 warehouse-forms">
+      <div class="col-12 col-xl-6">
+        <article class="warehouse-panel h-100">
+          <div class="panel-heading"><div><span class="panel-icon"><i class="bi bi-plus-square"></i></span><h2>Nova peça</h2></div></div>
+          <form id="form-peca" class="row g-3">
+            <div class="col-sm-4"><label class="form-label" for="peca-codigo">Código / SKU</label><input class="form-control" id="peca-codigo" maxlength="60" required></div>
+            <div class="col-sm-8"><label class="form-label" for="peca-nome">Nome da peça</label><input class="form-control" id="peca-nome" maxlength="160" required></div>
+            <div class="col-sm-4"><label class="form-label" for="peca-unidade">Unidade</label><select class="form-select" id="peca-unidade"><option value="un">Unidade</option><option value="pc">Peça</option><option value="l">Litro</option><option value="kg">Quilograma</option><option value="m">Metro</option><option value="cx">Caixa</option></select></div>
+            <div class="col-sm-4"><label class="form-label" for="peca-minimo">Estoque mínimo</label><input class="form-control" id="peca-minimo" type="number" min="0" step="0.001" value="0" required></div>
+            <div class="col-sm-12"><label class="form-label" for="peca-descricao">Descrição <span class="text-muted">(opcional)</span></label><input class="form-control" id="peca-descricao" maxlength="300"></div>
+            <div class="col-12 d-flex align-items-center gap-3"><button class="btn btn-warehouse" type="submit" id="btn-cadastrar-peca"><i class="bi bi-plus-lg me-1"></i>Cadastrar peça</button><span class="form-feedback" id="msg-peca" aria-live="polite"></span></div>
+          </form>
+        </article>
+      </div>
+
+      <div class="col-12 col-xl-6">
+        <article class="warehouse-panel h-100">
+          <div class="panel-heading"><div><span class="panel-icon panel-icon-amber"><i class="bi bi-box-arrow-in-down"></i></span><h2>Registrar entrada</h2></div></div>
+          <form id="form-entrada" class="row g-3">
+            <div class="col-sm-7"><label class="form-label" for="entrada-peca">Peça</label><select class="form-select" id="entrada-peca" required><option value="">Carregando peças...</option></select></div>
+            <div class="col-sm-5"><label class="form-label" for="entrada-quantidade">Quantidade</label><input class="form-control" id="entrada-quantidade" type="number" min="0.001" step="0.001" required></div>
+            <div class="col-sm-5"><label class="form-label" for="entrada-custo">Custo unitário (R$)</label><input class="form-control" id="entrada-custo" type="number" min="0" step="0.0001" required></div>
+            <div class="col-sm-7"><label class="form-label" for="entrada-observacao">Documento / observação</label><input class="form-control" id="entrada-observacao" maxlength="240" placeholder="Nota fiscal, fornecedor..." required></div>
+            <div class="col-12 d-flex align-items-center gap-3"><button class="btn btn-warehouse btn-warehouse-amber" type="submit" id="btn-registrar-entrada"><i class="bi bi-arrow-down-circle me-1"></i>Registrar entrada</button><span class="form-feedback" id="msg-entrada" aria-live="polite"></span></div>
+          </form>
+        </article>
+      </div>
+    </section>
+
+    <section class="warehouse-panel warehouse-mechanics d-none" id="painel-mecanicos">
+      <div class="panel-heading"><div><span class="panel-icon panel-icon-coral"><i class="bi bi-person-gear"></i></span><h2>Equipe de manutenção</h2></div></div>
+      <form id="form-mecanico" class="row g-3 align-items-end">
+        <div class="col-12 col-md-7"><label class="form-label" for="funcionario-mecanico">Funcionário</label><select class="form-select" id="funcionario-mecanico" required><option value="">Carregando funcionários...</option></select></div>
+        <div class="col-12 col-md-3"><label class="form-label" for="status-mecanico">Função na oficina</label><select class="form-select" id="status-mecanico"><option value="true">Mecânico</option><option value="false">Outro funcionário</option></select></div>
+        <div class="col-12 col-md-2 d-flex align-items-center gap-2"><button class="btn btn-warehouse w-100" type="submit" id="btn-salvar-mecanico">Salvar</button></div>
+        <div class="col-12"><span class="form-feedback" id="msg-mecanico" aria-live="polite"></span></div>
+      </form>
+    </section>
+
+    <section class="warehouse-panel inventory-panel">
+      <div class="panel-heading panel-heading-table"><div><span class="panel-icon"><i class="bi bi-boxes"></i></span><h2>Posição do estoque</h2></div><label class="inventory-search"><i class="bi bi-search"></i><input id="filtro-pecas" type="search" placeholder="Buscar peça ou código" aria-label="Buscar peça"></label></div>
+      <div class="table-responsive"><table class="table warehouse-table align-middle"><thead><tr><th>Código</th><th>Peça</th><th>Saldo</th><th>Mínimo</th><th>Custo médio</th><th>Valor em estoque</th><th>Situação</th></tr></thead><tbody id="tabela-pecas"><tr><td colspan="7" class="text-center text-muted py-4">Carregando estoque...</td></tr></tbody></table></div>
+    </section>
+
+    <section class="row g-3 warehouse-reports">
+      <div class="col-12 col-xl-5">
+        <article class="warehouse-panel h-100">
+          <div class="panel-heading"><div><span class="panel-icon panel-icon-coral"><i class="bi bi-speedometer2"></i></span><h2>Custo por veículo</h2></div></div>
+          <div class="table-responsive"><table class="table warehouse-table align-middle"><thead><tr><th>Veículo</th><th class="text-end">Peças consumidas</th></tr></thead><tbody id="tabela-custo-veiculo"><tr><td colspan="2" class="text-center text-muted py-4">Carregando custos...</td></tr></tbody></table></div>
+        </article>
+      </div>
+      <div class="col-12 col-xl-7">
+        <article class="warehouse-panel h-100">
+          <div class="panel-heading"><div><span class="panel-icon panel-icon-amber"><i class="bi bi-arrow-left-right"></i></span><h2>Movimentações recentes</h2></div></div>
+          <div class="table-responsive"><table class="table warehouse-table align-middle"><thead><tr><th>Data</th><th>Movimento</th><th>Peça</th><th>Quantidade</th><th class="text-end">Valor</th></tr></thead><tbody id="tabela-movimentos"><tr><td colspan="5" class="text-center text-muted py-4">Carregando movimentos...</td></tr></tbody></table></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+  <script src="assets/js/supabase-config.js"></script>
+  <script src="assets/js/almoxarifado.js"></script>
+</body>
+</html>
