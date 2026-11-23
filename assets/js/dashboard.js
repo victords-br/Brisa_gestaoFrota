@@ -76,206 +76,6 @@
     document.getElementById('kpi-veiculo').textContent = veiculoMaisProblematico;
   }
 
-  if (document.getElementById('tabela-problemas')) {
-  // ---- Tabela de Problemas ----
-  async function carregarTabelaProblemas() {
-    const tbody = document.getElementById('tabela-problemas');
-    
-    const { data, error } = await window.db
-      .from('vw_problemas_por_motorista')
-      .select('*');
-
-    if (error) {
-      console.error('Erro ao buscar problemas:', error);
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Erro ao carregar os dados.</td></tr>';
-      return;
-    }
-
-    const { data: vinculados, error: erroVinculos } = await window.db
-      .from('ordens_servico')
-      .select('checklist_id')
-      .not('checklist_id', 'is', null);
-    if (erroVinculos) {
-      console.error('Erro ao carregar checklists vinculados:', erroVinculos);
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Erro ao carregar os dados.</td></tr>';
-      return;
-    }
-
-    const idsVinculados = new Set((vinculados || []).map((os) => Number(os.checklist_id)));
-    const problemasPendentes = (data || []).filter((row) => !idsVinculados.has(Number(row.checklist_id || row.id)));
-
-    if (problemasPendentes.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center">Nenhum problema registrado.</td></tr>';
-      return;
-    }
-
-    tbody.innerHTML = problemasPendentes.map(row => {
-      // 1. Formatar a data para DD/MM/AAAA
-      const dataFormatada = new Date(row.data).toLocaleDateString('pt-BR');
-      
-      // 2. Montar os links das fotos (se existirem)
-      let fotosHtml = 'Nenhuma';
-      if (row.fotos && Array.isArray(row.fotos) && row.fotos.length > 0) {
-        fotosHtml = row.fotos.map((url, index) => 
-          `<a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary me-1 mb-1">📷 Foto ${index + 1}</a>`
-        ).join('');
-      }
-
-      const obsLimpa = row.detalhes_observacao || 'Problema apontado no Checklist';
-      const chkId = row.id || row.checklist_id || '';
-
-      return `
-        <tr id="linha-checklist-${chkId}">
-          <td class="text-nowrap">${dataFormatada}</td>
-          <td>${escapeHTML(row.motorista_nome || '—')}</td>
-          <td class="text-nowrap">${escapeHTML(row.veiculo_placa || '—')}<br><small class="text-muted">${escapeHTML(row.veiculo_modelo || '')}</small></td>
-          <td class="text-center"><span class="badge bg-danger rounded-pill">${row.total_problemas || 1}</span></td>
-          <td><small>${escapeHTML(row.detalhes_observacao || '—')}</small></td>
-          <td>${fotosHtml}</td>
-          <td class="text-nowrap">
-            <button class="btn btn-sm btn-primary fw-bold me-1 mb-1 btn-gerar-os" data-id="${escapeHTML(chkId)}" data-veiculo-id="${escapeHTML(row.veiculo_id || '')}" data-placa="${escapeHTML(row.veiculo_placa || '')}" data-obs="${escapeHTML(obsLimpa)}">
-              <i class="bi bi-tools me-1"></i> Gerar OS
-            </button>
-            <button class="btn btn-sm btn-outline-danger fw-bold mb-1 btn-descartar-problema" data-id="${escapeHTML(chkId)}">
-              <i class="bi bi-trash me-1"></i> Descartar
-            </button>
-          </td>
-        </tr>
-      `;
-    }).join('');
-  }
-
-  // Função global para descartar / excluir o checklist da lista de problemas
-  window.descartarProblema = async function(checklistId) {
-    console.log('Tentando excluir checklist ID bruto:', checklistId, 'Tipo:', typeof checklistId);
-
-    if (!checklistId || checklistId === 'undefined' || checklistId === 'null') {
-      alert('ID do checklist inválido.');
-      return;
-    }
-
-    if (!confirm('Tem certeza que deseja descartar e excluir este registro de problema?')) {
-      return;
-    }
-
-    const idNumerico = Number(checklistId);
-    console.log('ID convertido para número:', idNumerico);
-
-    const { data, error } = await window.db
-      .from('checklists')
-      .delete()
-      .eq('id', idNumerico)
-      .select();
-
-    console.log('Resultado exclusão Supabase - Data:', data, 'Erro:', error);
-
-    if (error) {
-      alert('Erro ao excluir checklist: ' + error.message);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      alert('Aviso: Nenhum registro foi excluído no banco de dados com o ID ' + idNumerico + '. Verifique se a view retorna o ID correto da tabela checklists.');
-      return;
-    }
-
-    // Remove a linha da tabela instantaneamente
-    const linha = document.getElementById(`linha-checklist-${checklistId}`);
-    if (linha) linha.remove();
-
-    alert('Problema descartado com sucesso.');
-    carregarTabelaProblemas();
-    carregarKPIs();
-  };
-
-  // Delegação de evento para o botão Gerar OS
-  document.getElementById('tabela-problemas').addEventListener('click', (e) => {
-    const btn = e.target.closest('.btn-gerar-os');
-    if (btn) {
-      abrirModalGerarOS(btn.dataset.id, btn.dataset.veiculoId, btn.dataset.placa, btn.dataset.obs);
-      return;
-    }
-
-    const discardButton = e.target.closest('.btn-descartar-problema');
-    if (discardButton) window.descartarProblema(discardButton.dataset.id);
-  });
-
-  // Função global para abrir modal de conversão em OS
-  window.abrirModalGerarOS = function(checklistId, veiculoId, placa, obs) {
-    const modalAntigo = document.getElementById('modal-gerar-os');
-    if (modalAntigo) modalAntigo.remove();
-
-    const modalHtml = `
-      <div class="modal fade" id="modal-gerar-os" tabindex="-1">
-        <div class="modal-dialog">
-          <div class="modal-content">
-            <div class="modal-header bg-primary text-white">
-              <h5 class="modal-title"><i class="bi bi-tools me-2"></i>Gerar Ordem de Serviço — ${placa}</h5>
-              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-              <form id="form-gerar-os">
-                <div class="mb-3">
-                  <label class="form-label fw-bold">Prioridade</label>
-                  <select class="form-select" id="os-prioridade" required>
-                    <option value="Média">Média</option>
-                    <option value="Alta">Alta</option>
-                    <option value="Imediata (Urgente)">Imediata (Urgente)</option>
-                  </select>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label fw-bold">Descrição do Problema para a Oficina</label>
-                  <textarea class="form-control" id="os-descricao" rows="3" required>${obs}</textarea>
-                </div>
-                <button type="submit" class="btn btn-primary w-100 fw-bold">Criar Ordem de Serviço</button>
-              </form>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-    const modalEl = document.getElementById('modal-gerar-os');
-    const modalBS = new bootstrap.Modal(modalEl);
-    modalBS.show();
-
-    document.getElementById('form-gerar-os').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const prioridade = document.getElementById('os-prioridade').value;
-      const descricao = document.getElementById('os-descricao').value.trim();
-
-      let finalVeiculoId = veiculoId && veiculoId !== 'undefined' ? veiculoId : null;
-
-      if (!finalVeiculoId && placa) {
-        const { data: vData } = await window.db.from('veiculos').select('id').eq('placa', placa).single();
-        if (vData) finalVeiculoId = vData.id;
-      }
-
-      const { error: errOS } = await window.db
-        .from('ordens_servico')
-        .insert([{
-          checklist_id: Number(checklistId),
-          veiculo_id: finalVeiculoId,
-          prioridade,
-          descricao,
-          status: 'Pendente'
-        }]);
-
-      if (errOS) {
-        alert('Erro ao criar OS: ' + errOS.message);
-        return;
-      }
-
-      modalBS.hide();
-      alert('Ordem de Serviço criada com sucesso!');
-      carregarTabelaProblemas();
-      carregarOrdensServicoManutencao();
-      carregarKPIs();
-    });
-  };
-  }
-
   // ---- Logout ----
   document.getElementById('btn-sair').addEventListener('click', async () => {
     await window.db.auth.signOut();
@@ -290,7 +90,7 @@
 
     const { data, error } = await window.db
       .from('ordens_servico')
-      .select('*, veiculos(placa, modelo), grupo_problemas(nome), motorista:funcionarios!fk_ordens_servico_funcionario(cod_funcionario, nome_funcionario), mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), itens_ordem_servico(id, quantidade, quantidade_utilizada, custo_unitario, pecas(nome, unidade))')
+      .select('*, veiculos(placa, modelo), grupo_problemas(nome), motorista:funcionarios!fk_ordens_servico_funcionario(cod_funcionario, nome_funcionario), mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), ordens_servico_mecanicos(funcionario_id, especialidade, horas_trabalhadas, mecanico:funcionarios!ordens_servico_mecanicos_funcionario_id_fkey(nome_funcionario)), itens_ordem_servico(id, quantidade, quantidade_utilizada, custo_unitario, pecas(nome, unidade))')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -314,12 +114,25 @@
       const isConcluida = os.status === 'Concluída';
       const prioridade = os.prioridade || 'Normal';
       const itens = os.itens_ordem_servico || [];
-      const custoPecas = itens.reduce((total, item) => total + Number(item.quantidade_utilizada || 0) * Number(item.custo_unitario || 0), 0);
+      const equipe = os.ordens_servico_mecanicos || [];
+      const custoPecas = itens.reduce((total, item) => {
+        const quantidadeCobrada = isConcluida ? item.quantidade_utilizada : item.quantidade;
+        return total + Number(quantidadeCobrada || 0) * Number(item.custo_unitario || 0);
+      }, 0);
       const itensHtml = itens.length
-        ? `${itens.map(item => `${escapeHTML(item.pecas?.nome || 'Peça')} · liberada ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')} · usada ${Number(item.quantidade_utilizada || 0).toLocaleString('pt-BR')}`).join('<br>')}<br><strong>Custo confirmado: ${custoPecas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>`
+        ? `${itens.map(item => `${escapeHTML(item.pecas?.nome || 'Peça')} · liberada ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')}${isConcluida ? ` · usada ${Number(item.quantidade_utilizada || 0).toLocaleString('pt-BR')}` : ' · uso a confirmar'}`).join('<br>')}<br><strong>${isConcluida ? 'Custo real das peças' : 'Custo estimado das peças liberadas'}: ${custoPecas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>`
         : '—';
       const dataConclusao = os.data_conclusao ? new Date(os.data_conclusao).toLocaleString('pt-BR') : '—';
-      const mecanicoNome = os.mecanico_funcionario?.nome_funcionario || os.mecanico || '—';
+      const mecanicoNome = equipe.length
+        ? equipe.map(item => {
+          const horas = Number(item.horas_trabalhadas || 0);
+          const detalheHoras = isConcluida
+            ? ` · ${horas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} h`
+            : '';
+          return `${item.mecanico?.nome_funcionario || 'Mecânico'} (${item.especialidade}${detalheHoras})`;
+        }).join(', ')
+        : os.mecanico_funcionario?.nome_funcionario || os.mecanico || '—';
+      const horasTrabalhadas = equipe.reduce((total, item) => total + Number(item.horas_trabalhadas || 0), 0);
       const status = os.status || 'Pendente';
       const busca = `${veiculoStr} ${motorista} ${grupoNome} ${os.descricao}`.toLocaleLowerCase('pt-BR');
 
@@ -350,12 +163,13 @@
           <div class="ops-card-facts">
             <div class="ops-card-fact"><span class="ops-card-label">Motorista</span><strong>${escapeHTML(motorista)}</strong></div>
             <div class="ops-card-fact"><span class="ops-card-label">Grupo</span><strong>${escapeHTML(grupoNome)}</strong></div>
-            <div class="ops-card-fact"><span class="ops-card-label">Mecânico</span><strong>${escapeHTML(mecanicoNome)}</strong></div>
+            <div class="ops-card-fact"><span class="ops-card-label">Equipe</span><strong>${escapeHTML(mecanicoNome)}</strong></div>
+            <div class="ops-card-fact"><span class="ops-card-label">Horas trabalhadas</span><strong>${isConcluida ? `${horasTrabalhadas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} h` : 'A calcular ao concluir'}</strong></div>
           </div>
           <p class="ops-card-description">${escapeHTML(os.descricao)}</p>
           <div class="ops-card-parts"><span class="ops-card-label">Peças e custo</span>${itensHtml}</div>
           <footer class="ops-card-footer">
-            <small>${isConcluida ? `Concluída ${escapeHTML(dataConclusao)} · Mecânico: ${escapeHTML(mecanicoNome)}` : 'Aguardando tratamento da manutenção'}</small>
+            <small>${isConcluida ? `Concluída ${escapeHTML(dataConclusao)} · Equipe: ${escapeHTML(mecanicoNome)}` : 'Aguardando tratamento da manutenção'}</small>
             ${acoesHtml}
           </footer>
         </article>
@@ -397,15 +211,16 @@
 
     const { data: ordem, error } = await window.db
       .from('ordens_servico')
-      .select('mecanico_id, mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), itens_ordem_servico(id, quantidade, quantidade_utilizada, custo_unitario, pecas(nome, unidade))')
+      .select('mecanico_id, mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), ordens_servico_mecanicos(funcionario_id, especialidade, inicio_em, fim_em, mecanico:funcionarios!ordens_servico_mecanicos_funcionario_id_fkey(nome_funcionario)), itens_ordem_servico(id, quantidade, quantidade_utilizada, custo_unitario, pecas(nome, unidade))')
       .eq('id', osId)
       .single();
     if (error) {
       alert('Não foi possível carregar as peças liberadas para esta OS: ' + error.message);
       return;
     }
-    if (!ordem.mecanico_id) {
-      alert('Associe o mecânico responsável e libere as peças pelo Almoxarifado antes de concluir esta OS.');
+    const equipe = ordem.ordens_servico_mecanicos || [];
+    if (!equipe.length) {
+      alert('Associe pelo menos um mecânico à OS no Almoxarifado antes de concluir.');
       return;
     }
 
@@ -415,6 +230,22 @@
         <div class="col-7"><strong>${escapeHTML(item.pecas?.nome || 'Peça')}</strong><small class="d-block text-muted">Liberada: ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')}</small></div>
         <div class="col-5"><label class="visually-hidden" for="usada-${escapeHTML(item.id)}">Quantidade utilizada</label><input id="usada-${escapeHTML(item.id)}" class="form-control quantidade-utilizada" type="number" min="0" max="${escapeHTML(item.quantidade)}" step="0.001" value="0" aria-label="Quantidade utilizada"></div>
       </div>`).join('') : '<p class="text-muted mb-0">Nenhuma peça liberada para esta OS. Ela será concluída sem consumo de peças.</p>';
+    const dataLocal = (valor) => {
+      if (!valor) return '';
+      const data = new Date(valor);
+      data.setMinutes(data.getMinutes() - data.getTimezoneOffset());
+      return data.toISOString().slice(0, 16);
+    };
+    const equipeHtml = equipe.map(item => `
+      <div class="border rounded p-2 mb-2 linha-horas-mecanico" data-mecanico-id="${escapeHTML(item.funcionario_id)}">
+        <strong>${escapeHTML(item.mecanico?.nome_funcionario || 'Mecânico')}</strong>
+        <span class="text-muted"> · ${escapeHTML(item.especialidade)}</span>
+        <div class="row g-2 mt-1">
+          <div class="col-6"><label class="form-label small">Início</label><input class="form-control inicio-mecanico" type="datetime-local" required value="${escapeHTML(dataLocal(item.inicio_em))}"></div>
+          <div class="col-6"><label class="form-label small">Fim</label><input class="form-control fim-mecanico" type="datetime-local" required value="${escapeHTML(dataLocal(item.fim_em))}"></div>
+        </div>
+        <small class="text-muted horas-mecanico-preview">Informe o início e o fim.</small>
+      </div>`).join('');
 
     const modalHtml = `
       <div class="modal fade" id="modal-concluir-os" tabindex="-1">
@@ -427,8 +258,10 @@
             <div class="modal-body">
               <form id="form-concluir-os">
                 <div class="mb-3">
-                  <span class="form-label fw-bold d-block">Mecânico responsável</span>
-                  <strong>${escapeHTML(ordem.mecanico_funcionario?.nome_funcionario || '—')}</strong>
+                  <span class="form-label fw-bold d-block">Equipe e horas trabalhadas</span>
+                  <p class="small text-muted">Informe o horário de início e fim de cada mecânico. As horas são calculadas individualmente e somadas na OS.</p>
+                  <div id="equipe-horas-os">${equipeHtml}</div>
+                  <strong>Total da equipe: <span id="total-horas-equipe">0,00 h</span></strong>
                 </div>
                 <div class="mb-3">
                   <label class="form-label fw-bold">Observações do Reparo</label>
@@ -452,20 +285,52 @@
     const modalBS = new bootstrap.Modal(modalEl);
     modalBS.show();
 
-    document.getElementById('form-concluir-os').addEventListener('submit', async (e) => {
+    const atualizarHoras = () => {
+      let total = 0;
+      modalEl.querySelectorAll('.linha-horas-mecanico').forEach(linha => {
+        const inicio = linha.querySelector('.inicio-mecanico').value;
+        const fim = linha.querySelector('.fim-mecanico').value;
+        const preview = linha.querySelector('.horas-mecanico-preview');
+        if (!inicio || !fim || new Date(fim) <= new Date(inicio)) {
+          preview.textContent = inicio && fim ? 'O fim deve ser depois do início.' : 'Informe o início e o fim.';
+          return;
+        }
+        const horas = (new Date(fim) - new Date(inicio)) / 3600000;
+        total += horas;
+        preview.textContent = `${horas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} h trabalhadas`;
+      });
+      document.getElementById('total-horas-equipe').textContent = `${total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} h`;
+    };
+    modalEl.querySelectorAll('.inicio-mecanico, .fim-mecanico').forEach(input => input.addEventListener('input', atualizarHoras));
+    atualizarHoras();
+
+    modalEl.querySelector('#form-concluir-os').addEventListener('submit', async (e) => {
       e.preventDefault();
       const obs = document.getElementById('mecanico-obs').value.trim();
-      const itens = [...document.querySelectorAll('#itens-pecas-os .linha-confirmacao-peca')].map(linha => ({
+      const itens = [...modalEl.querySelectorAll('#itens-pecas-os .linha-confirmacao-peca')].map(linha => ({
         item_id: Number(linha.dataset.itemId),
         quantidade_utilizada: Number(linha.querySelector('.quantidade-utilizada').value)
       }));
       for (const item of itens) {
-        const linha = document.querySelector(`[data-item-id="${item.item_id}"]`);
+        const linha = modalEl.querySelector(`[data-item-id="${item.item_id}"]`);
         const limite = Number(linha.querySelector('.quantidade-utilizada').max);
         if (!Number.isFinite(item.quantidade_utilizada) || item.quantidade_utilizada < 0 || item.quantidade_utilizada > limite) {
           alert('Informe uma quantidade utilizada válida, sem ultrapassar o que foi liberado.');
           return;
         }
+      }
+      const mecanicos = [...modalEl.querySelectorAll('.linha-horas-mecanico')].map(linha => {
+        const inicio = linha.querySelector('.inicio-mecanico').value;
+        const fim = linha.querySelector('.fim-mecanico').value;
+        return {
+          funcionario_id: linha.dataset.mecanicoId,
+          inicio_em: inicio && Number.isFinite(new Date(inicio).getTime()) ? new Date(inicio).toISOString() : '',
+          fim_em: fim && Number.isFinite(new Date(fim).getTime()) ? new Date(fim).toISOString() : ''
+        };
+      });
+      if (mecanicos.some(item => !item.inicio_em || !item.fim_em || new Date(item.fim_em) <= new Date(item.inicio_em))) {
+        alert('Informe horários válidos para todos os mecânicos. O fim deve ser depois do início.');
+        return;
       }
 
       const botao = document.getElementById('btn-concluir-os');
@@ -474,7 +339,8 @@
       const { error } = await window.db.rpc('finalizar_ordem_servico', {
         p_ordem_id: osId,
         p_obs: obs,
-        p_itens: itens
+        p_itens: itens,
+        p_mecanicos: mecanicos
       });
 
       if (error) {

@@ -34,6 +34,8 @@
   })[char]);
   const moeda = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   let pecasCache = [];
+  let usuariosCache = [];
+  let funcionariosCache = [];
 
   function mensagem(id, texto, tipo) {
     const elemento = document.getElementById(id);
@@ -103,50 +105,90 @@
     const tbody = document.getElementById('tabela-custo-veiculo');
     const { data, error } = await window.db
       .from('itens_ordem_servico')
-      .select('quantidade_utilizada, custo_unitario, ordens_servico!inner(veiculos(placa, modelo))')
-      .gt('quantidade_utilizada', 0);
+      .select('quantidade, quantidade_utilizada, custo_unitario, ordens_servico!inner(status, veiculos(placa, modelo))');
     if (error) {
-      tbody.innerHTML = '<tr><td colspan="2" class="text-center text-danger py-4">Erro ao calcular custos por veículo.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-4">Erro ao calcular custos por veículo.</td></tr>';
       return;
     }
 
     const totais = new Map();
     (data || []).forEach(movimento => {
-      const veiculo = movimento.ordens_servico?.veiculos;
+      const ordem = movimento.ordens_servico;
+      const veiculo = ordem?.veiculos;
       if (!veiculo) return;
       const nome = `${veiculo.placa} · ${veiculo.modelo}`;
-      totais.set(nome, (totais.get(nome) || 0) + Number(movimento.quantidade_utilizada || 0) * Number(movimento.custo_unitario || 0));
+      const total = totais.get(nome) || { real: 0, estimado: 0 };
+      if (ordem.status === 'Concluída') {
+        total.real += Number(movimento.quantidade_utilizada || 0) * Number(movimento.custo_unitario || 0);
+      } else {
+        total.estimado += Number(movimento.quantidade || 0) * Number(movimento.custo_unitario || 0);
+      }
+      totais.set(nome, total);
     });
-    const linhas = [...totais.entries()].sort((a, b) => b[1] - a[1]);
-    tbody.innerHTML = linhas.length ? linhas.map(([veiculo, custo]) =>
-      `<tr><td class="fw-bold">${escapeHTML(veiculo)}</td><td class="text-end fw-bold">${moeda(custo)}</td></tr>`
-    ).join('') : '<tr><td colspan="2" class="text-center text-muted py-4">Ainda não há consumo de peças vinculado a veículos.</td></tr>';
+    const linhas = [...totais.entries()].sort((a, b) => (b[1].real + b[1].estimado) - (a[1].real + a[1].estimado));
+    tbody.innerHTML = linhas.length ? linhas.map(([veiculo, custos]) =>
+      `<tr><td class="fw-bold">${escapeHTML(veiculo)}</td><td class="text-end fw-bold">${moeda(custos.real)}</td><td class="text-end fw-bold">${moeda(custos.estimado)}</td></tr>`
+    ).join('') : '<tr><td colspan="3" class="text-center text-muted py-4">Ainda não há peças liberadas para ordens vinculadas a veículos.</td></tr>';
+  }
+
+  function atualizarOpcoesUsuarios() {
+    const selectUsuario = document.getElementById('usuario-vinculo');
+    const selectFuncionario = document.getElementById('funcionario-mecanico');
+    const funcionarioId = selectFuncionario.value;
+    const desejado = selectFuncionario.selectedOptions[0]?.dataset.user || '';
+    const vinculos = new Map(funcionariosCache.filter(funcionario => funcionario.user_id).map(funcionario => [funcionario.user_id, funcionario]));
+    selectUsuario.innerHTML = '<option value="">Sem vínculo</option>' + usuariosCache.map(usuario => {
+      const dono = vinculos.get(usuario.id);
+      const sufixo = dono && dono.id !== funcionarioId ? ` • vinculado a ${dono.nome_funcionario}` : '';
+      return `<option value="${escapeHTML(usuario.id)}">${escapeHTML(usuario.nome)} (${escapeHTML(usuario.role)})${escapeHTML(sufixo)}</option>`;
+    }).join('');
+    selectUsuario.value = desejado;
+  }
+
+  function aplicarSelecaoFuncionario() {
+    const select = document.getElementById('funcionario-mecanico');
+    document.getElementById('status-mecanico').value = select.selectedOptions[0]?.dataset.mecanico === 'true' ? 'true' : 'false';
+    atualizarOpcoesUsuarios();
+  }
+
+  async function carregarUsuarios() {
+    const select = document.getElementById('usuario-vinculo');
+    const { data, error } = await window.db.rpc('listar_usuarios_app');
+    if (error) {
+      select.innerHTML = '<option value="">Erro ao carregar usuários</option>';
+      mensagem('msg-vinculo', error.message, 'error');
+      return;
+    }
+    usuariosCache = data || [];
+    atualizarOpcoesUsuarios();
   }
 
   async function carregarFuncionarios() {
     const select = document.getElementById('funcionario-mecanico');
+    const anterior = select.value;
     const { data, error } = await window.db
       .from('funcionarios')
-      .select('id, cod_funcionario, nome_funcionario, is_mecanico')
+      .select('id, cod_funcionario, nome_funcionario, is_mecanico, user_id')
       .order('nome_funcionario');
     if (error) {
       select.innerHTML = '<option value="">Erro ao carregar funcionários</option>';
       mensagem('msg-mecanico', error.message, 'error');
       return;
     }
-    select.innerHTML = '<option value="">Selecione um funcionário...</option>' + (data || []).map(funcionario =>
-      `<option value="${escapeHTML(funcionario.id)}" data-mecanico="${funcionario.is_mecanico}">[${escapeHTML(funcionario.cod_funcionario)}] ${escapeHTML(funcionario.nome_funcionario)}</option>`
+    funcionariosCache = data || [];
+    select.innerHTML = '<option value="">Selecione um funcionário...</option>' + funcionariosCache.map(funcionario =>
+      `<option value="${escapeHTML(funcionario.id)}" data-mecanico="${funcionario.is_mecanico}" data-user="${escapeHTML(funcionario.user_id || '')}">[${escapeHTML(funcionario.cod_funcionario)}] ${escapeHTML(funcionario.nome_funcionario)}${funcionario.user_id ? ' ✓' : ''}</option>`
     ).join('');
-    select.addEventListener('change', () => {
-      document.getElementById('status-mecanico').value = select.selectedOptions[0]?.dataset.mecanico === 'true' ? 'true' : 'false';
-    });
+    select.onchange = aplicarSelecaoFuncionario;
+    if (anterior) select.value = anterior;
+    aplicarSelecaoFuncionario();
   }
 
   async function carregarOrdensLiberacao() {
     const container = document.getElementById('lista-os-liberacao');
     const [{ data: ordens, error: erroOrdens }, { data: mecanicos, error: erroMecanicos }] = await Promise.all([
       window.db.from('ordens_servico')
-        .select('id, descricao, created_at, status, veiculos(placa, modelo), mecanico_id, mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), itens_ordem_servico(id, quantidade, quantidade_utilizada, pecas(codigo, nome, unidade))')
+        .select('id, descricao, created_at, status, veiculos(placa, modelo), mecanico_id, mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), ordens_servico_mecanicos(funcionario_id, especialidade, mecanico:funcionarios!ordens_servico_mecanicos_funcionario_id_fkey(nome_funcionario, cod_funcionario)), itens_ordem_servico(id, quantidade, quantidade_utilizada, pecas(codigo, nome, unidade))')
         .eq('status', 'Pendente')
         .order('created_at', { ascending: true }),
       window.db.from('funcionarios').select('id, cod_funcionario, nome_funcionario').eq('is_mecanico', true).order('nome_funcionario')
@@ -174,21 +216,33 @@
       const itensHtml = itens.length ? itens.map(item =>
         `${escapeHTML(item.pecas?.nome || 'Peça')} × ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')}`
       ).join('<br>') : 'Nenhuma peça liberada ainda.';
+      const equipe = os.ordens_servico_mecanicos || [];
+      const equipeHtml = equipe.length
+        ? equipe.map(item => `<span class="badge text-bg-light border me-1 mb-1">${escapeHTML(item.mecanico?.nome_funcionario || 'Mecânico')} · ${escapeHTML(item.especialidade)}</span>`).join('')
+        : '<span class="text-muted">Nenhum mecânico associado.</span>';
+      const linhasMecanicos = equipe.length
+        ? equipe.map(item => `<div class="row g-2 align-items-end release-mechanic-line mb-2">
+            <div class="col-7"><label class="form-label small">Mecânico</label><select class="form-select release-mechanic" required><option value="">Selecione...</option>${mecanicoOptions}</select></div>
+            <div class="col-5"><label class="form-label small">Especialidade</label><input class="form-control release-specialty" maxlength="80" required value="${escapeHTML(item.especialidade)}" placeholder="Ex.: Eletricista"></div>
+          </div>`).join('')
+        : `<div class="row g-2 align-items-end release-mechanic-line mb-2">
+            <div class="col-7"><label class="form-label small">Mecânico</label><select class="form-select release-mechanic" required><option value="">Selecione...</option>${mecanicoOptions}</select></div>
+            <div class="col-5"><label class="form-label small">Especialidade</label><input class="form-control release-specialty" maxlength="80" required placeholder="Ex.: Eletricista"></div>
+          </div>`;
       return `<article class="warehouse-release-card">
         <h3>${escapeHTML(placa)}</h3>
         <p class="small text-muted mb-1">OS #${escapeHTML(String(os.id).slice(-8))}</p>
         <p class="small mb-2">${escapeHTML(os.descricao)}</p>
-        <p class="small mb-1"><strong>Mecânico:</strong> ${escapeHTML(os.mecanico_funcionario?.nome_funcionario || 'A definir')}</p>
+        <div class="small mb-2"><strong>Equipe:</strong><div>${equipeHtml}</div></div>
         <div class="warehouse-release-items"><strong>Peças liberadas</strong><br>${itensHtml}</div>
         <form class="warehouse-release-form" data-release-os="${escapeHTML(os.id)}">
-          <label class="form-label" for="mecanico-os-${escapeHTML(os.id)}">Mecânico que receberá</label>
-          <select class="form-select mb-2 release-mechanic" id="mecanico-os-${escapeHTML(os.id)}" required ${os.mecanico_id ? 'disabled' : ''}>
-            <option value="">Selecione...</option>${mecanicoOptions}
-          </select>
+          <label class="form-label">Mecânicos e especialidades</label>
+          <div class="release-mechanics">${linhasMecanicos}</div>
+          <button type="button" class="btn btn-sm btn-outline-secondary btn-add-mechanic mb-2">Adicionar mecânico</button>
           <div class="release-lines d-flex flex-column gap-2"></div>
           <div class="d-flex gap-2 mt-2">
             <button type="button" class="btn btn-sm btn-outline-secondary btn-add-release" ${pecaOptions ? '' : 'disabled'}><i class="bi bi-plus-lg me-1"></i>Adicionar peça</button>
-            <button type="submit" class="btn btn-sm btn-warehouse">${itens.length ? 'Liberar mais peças' : 'Associar mecânico e liberar'}</button>
+            <button type="submit" class="btn btn-sm btn-warehouse">${itens.length ? 'Salvar equipe / liberar peças' : 'Salvar equipe e liberar peças'}</button>
           </div>
           <span class="form-feedback" aria-live="polite"></span>
         </form>
@@ -197,11 +251,23 @@
 
     container.querySelectorAll('[data-release-os]').forEach(form => {
       const os = ordens.find(ordem => ordem.id === form.dataset.releaseOs);
-      if (os?.mecanico_id) form.querySelector('.release-mechanic').value = os.mecanico_id;
+      (os?.ordens_servico_mecanicos || []).forEach((item, index) => {
+        const select = form.querySelectorAll('.release-mechanic')[index];
+        if (select) select.value = item.funcionario_id;
+      });
     });
   }
 
   document.getElementById('lista-os-liberacao').addEventListener('click', event => {
+    const addMechanic = event.target.closest('.btn-add-mechanic');
+    if (addMechanic) {
+      const linhaBase = addMechanic.closest('form').querySelector('.release-mechanic-line');
+      const linha = linhaBase.cloneNode(true);
+      linha.querySelector('.release-mechanic').value = '';
+      linha.querySelector('.release-specialty').value = '';
+      addMechanic.closest('form').querySelector('.release-mechanics').appendChild(linha);
+      return;
+    }
     const button = event.target.closest('.btn-add-release');
     if (!button) return;
     const linha = document.createElement('div');
@@ -220,7 +286,19 @@
     const form = event.target.closest('[data-release-os]');
     if (!form) return;
     event.preventDefault();
-    const mecanicoId = form.querySelector('.release-mechanic').value;
+    const linhasEquipe = [...form.querySelectorAll('.release-mechanic-line')];
+    const mecanicos = linhasEquipe.map(linha => ({
+      funcionario_id: linha.querySelector('.release-mechanic').value,
+      especialidade: linha.querySelector('.release-specialty').value.trim()
+    }));
+    if (mecanicos.some(item => !item.funcionario_id || !item.especialidade)) {
+      form.querySelector('.form-feedback').textContent = 'Selecione cada mecânico e informe sua especialidade.';
+      return;
+    }
+    if (new Set(mecanicos.map(item => item.funcionario_id)).size !== mecanicos.length) {
+      form.querySelector('.form-feedback').textContent = 'Não repita o mesmo mecânico na equipe.';
+      return;
+    }
     const itens = [];
     for (const linha of form.querySelectorAll('.release-line')) {
       const select = linha.querySelector('.release-part');
@@ -237,7 +315,7 @@
     form.querySelector('.form-feedback').textContent = '';
     const { error } = await window.db.rpc('registrar_saida_estoque_os', {
       p_ordem_id: form.dataset.releaseOs,
-      p_mecanico_id: mecanicoId,
+      p_mecanicos: mecanicos,
       p_itens: itens
     });
     if (error) {
@@ -314,13 +392,33 @@
     }
     button.disabled = false;
   });
+  document.getElementById('btn-vincular-usuario').addEventListener('click', async () => {
+    const button = document.getElementById('btn-vincular-usuario');
+    const funcionarioId = document.getElementById('funcionario-mecanico').value;
+    if (!funcionarioId) {
+      mensagem('msg-vinculo', 'Selecione um funcionário acima.', 'error');
+      return;
+    }
+    button.disabled = true;
+    mensagem('msg-vinculo', '', '');
+    const { error } = await window.db.rpc('definir_funcionario_vinculo', {
+      p_funcionario_id: funcionarioId,
+      p_user_id: document.getElementById('usuario-vinculo').value || null
+    });
+    if (error) mensagem('msg-vinculo', error.message, 'error');
+    else {
+      mensagem('msg-vinculo', 'Vínculo atualizado.', 'success');
+      await carregarFuncionarios();
+    }
+    button.disabled = false;
+  });
   document.getElementById('btn-sair').addEventListener('click', async () => {
     await window.db.auth.signOut();
     window.location.replace('login.html');
   });
 
   const cargas = [carregarPecas(), carregarMovimentacoes(), carregarCustosPorVeiculo()];
-  if (perfil.role === 'admin') cargas.push(carregarFuncionarios());
+  if (perfil.role === 'admin') cargas.push(carregarFuncionarios(), carregarUsuarios());
   await Promise.all(cargas);
   await carregarOrdensLiberacao();
 })();

@@ -81,6 +81,14 @@
         <div class="col-12 col-md-3"><label class="form-label" for="status-mecanico">Função na oficina</label><select class="form-select" id="status-mecanico"><option value="true">Mecânico</option><option value="false">Outro funcionário</option></select></div>
         <div class="col-12 col-md-2 d-flex align-items-center gap-2"><button class="btn btn-warehouse w-100" type="submit" id="btn-salvar-mecanico">Salvar</button></div>
         <div class="col-12"><span class="form-feedback" id="msg-mecanico" aria-live="polite"></span></div>
+        <div class="col-12"><hr class="my-1"></div>
+        <div class="col-12 col-md-7">
+          <label class="form-label" for="usuario-vinculo">Usuário do app (login)</label>
+          <select class="form-select" id="usuario-vinculo"><option value="">Carregando usuários...</option></select>
+          <div class="form-text">Conta que o funcionário usa para entrar. Sem vínculo, as ordens abertas pelo checklist ficam sem funcionário.</div>
+        </div>
+        <div class="col-12 col-md-3 d-flex align-items-center gap-2"><button class="btn btn-outline-secondary w-100" type="button" id="btn-vincular-usuario">Vincular usuário</button></div>
+        <div class="col-12"><span class="form-feedback" id="msg-vinculo" aria-live="polite"></span></div>
       </form>
     </section>
 
@@ -92,8 +100,8 @@
     <section class="row g-3 warehouse-reports">
       <div class="col-12 col-xl-5">
         <article class="warehouse-panel h-100">
-          <div class="panel-heading"><div><span class="panel-icon panel-icon-coral"><i class="bi bi-speedometer2"></i></span><h2>Custo por veículo</h2></div></div>
-          <div class="table-responsive"><table class="table warehouse-table align-middle"><thead><tr><th>Veículo</th><th class="text-end">Peças consumidas</th></tr></thead><tbody id="tabela-custo-veiculo"><tr><td colspan="2" class="text-center text-muted py-4">Carregando custos...</td></tr></tbody></table></div>
+          <div class="panel-heading"><div><span class="panel-icon panel-icon-coral"><i class="bi bi-speedometer2"></i></span><h2>Custo de peças por veículo</h2></div></div>
+          <div class="table-responsive"><table class="table warehouse-table align-middle"><thead><tr><th>Veículo</th><th class="text-end">Real (concluído)</th><th class="text-end">Estimado (pendente)</th></tr></thead><tbody id="tabela-custo-veiculo"><tr><td colspan="3" class="text-center text-muted py-4">Carregando custos...</td></tr></tbody></table></div>
         </article>
       </div>
       <div class="col-12 col-xl-7">

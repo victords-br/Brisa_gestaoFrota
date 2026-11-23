@@ -38,6 +38,7 @@
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[char]);
   let gruposCache = [];
+  let choicesFuncionario = null;
   document.getElementById('nome-porteiro').textContent = PERFIL.nome + ' (Portaria)';
 
   // ---- Carrega veículos e grupos ----
@@ -72,7 +73,7 @@
       
       // Ativa Choices.js para busca interativa no select se disponível
       if (typeof Choices !== 'undefined') {
-        new Choices(selFuncionario, {
+        choicesFuncionario = new Choices(selFuncionario, {
           itemSelectText: 'Pressione para selecionar',
           noResultsText: 'Nenhum funcionário encontrado',
           noChoicesText: 'Sem funcionários',
@@ -256,9 +257,9 @@
       const dataF = new Date(os.created_at).toLocaleString('pt-BR');
       const veiculoStr = os.veiculos ? `${os.veiculos.placa} (${os.veiculos.modelo})` : '—';
       const grupoNome = os.grupo_problemas ? os.grupo_problemas.nome : (os.grupo || 'Geral');
-      const motorista = os.motorista_nome || (os.motorista
+      const motorista = os.motorista
         ? `${os.motorista.nome_funcionario} (${os.motorista.cod_funcionario})`
-        : '—');
+        : (os.motorista_nome || '—');
       const prioridade = os.prioridade || 'Normal';
       const status = os.status || 'Pendente';
       const isComplete = status === 'Concluída';
@@ -323,6 +324,7 @@
       msg.className = 'text-center mt-3 text-success fw-bold';
       msg.textContent = '✅ Ordem de Serviço criada com sucesso!';
       document.getElementById('form-os').reset();
+      choicesFuncionario?.removeActiveItems();
       await Promise.all([carregarOSs(), carregarChecklistsPortaria()]);
     } catch (err) {
       console.error(err);
