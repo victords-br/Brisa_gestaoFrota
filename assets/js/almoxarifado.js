@@ -265,7 +265,7 @@
       const itens = os.itens_ordem_servico || [];
       const itensHtml = itens.length ? itens.map(item =>
         `${escapeHTML(item.pecas?.nome || 'Peça')} × ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')}`
-      ).join('<br>') : 'Nenhuma peça liberada ainda.';
+      ).join('<br>') : 'Nenhuma peça associada — a OS pode ser salva apenas com a equipe.';
       const equipe = os.ordens_servico_mecanicos || [];
       const equipeHtml = equipe.length
         ? equipe.map(item => `<span class="badge text-bg-light border me-1 mb-1">${escapeHTML(item.mecanico?.nome_funcionario || 'Membro')} · ${escapeHTML(item.especialidade)}</span>`).join('')
