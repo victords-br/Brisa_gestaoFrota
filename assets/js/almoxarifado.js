@@ -36,6 +36,11 @@
   let pecasCache = [];
   let usuariosCache = [];
   let funcionariosCache = [];
+  let funcoesCache = [];
+
+  function rotuloFuncionario(funcionario) {
+    return `${funcionario.nome_funcionario} (${funcionario.cod_funcionario})`;
+  }
 
   function mensagem(id, texto, tipo) {
     const elemento = document.getElementById(id);
@@ -134,8 +139,10 @@
   function atualizarOpcoesUsuarios() {
     const selectUsuario = document.getElementById('usuario-vinculo');
     const selectFuncionario = document.getElementById('funcionario-mecanico');
+    if (!selectUsuario || !selectFuncionario) return;
     const funcionarioId = selectFuncionario.value;
-    const desejado = selectFuncionario.selectedOptions[0]?.dataset.user || '';
+    const funcionarioSelecionado = funcionariosCache.find(item => item.id === funcionarioId);
+    const desejado = funcionarioSelecionado?.user_id || '';
     const vinculos = new Map(funcionariosCache.filter(funcionario => funcionario.user_id).map(funcionario => [funcionario.user_id, funcionario]));
     selectUsuario.innerHTML = '<option value="">Sem vínculo</option>' + usuariosCache.map(usuario => {
       const dono = vinculos.get(usuario.id);
@@ -146,13 +153,44 @@
   }
 
   function aplicarSelecaoFuncionario() {
-    const select = document.getElementById('funcionario-mecanico');
-    document.getElementById('status-mecanico').value = select.selectedOptions[0]?.dataset.mecanico === 'true' ? 'true' : 'false';
+    const busca = document.getElementById('funcionario-mecanico-busca');
+    const funcionarioId = document.getElementById('funcionario-mecanico');
+    if (!busca || !funcionarioId) return;
+    const termo = busca.value.trim().toLocaleLowerCase('pt-BR');
+    const funcionario = funcionariosCache.find(item =>
+      rotuloFuncionario(item).toLocaleLowerCase('pt-BR') === termo
+    );
+    funcionarioId.value = funcionario?.id || '';
+    const selectFuncao = document.getElementById('funcao-oficina');
+    if (selectFuncao) {
+      selectFuncao.value = funcionario?.funcao_id || '';
+    }
     atualizarOpcoesUsuarios();
+  }
+
+  async function carregarFuncoes() {
+    const select = document.getElementById('funcao-oficina');
+    if (!select) return;
+    const anterior = select.value;
+    const { data, error } = await window.db
+      .from('funcoes_oficina')
+      .select('id, nome')
+      .eq('ativo', true)
+      .order('nome');
+    if (error) {
+      mensagem('msg-mecanico', error.message, 'error');
+      return;
+    }
+    funcoesCache = data || [];
+    select.innerHTML = '<option value="">Sem função (fora da manutenção)</option>' + funcoesCache.map(funcao =>
+      `<option value="${escapeHTML(funcao.id)}">${escapeHTML(funcao.nome)}</option>`
+    ).join('');
+    if (anterior) select.value = anterior;
   }
 
   async function carregarUsuarios() {
     const select = document.getElementById('usuario-vinculo');
+    if (!select) return;
     const { data, error } = await window.db.rpc('listar_usuarios_app');
     if (error) {
       select.innerHTML = '<option value="">Erro ao carregar usuários</option>';
@@ -164,23 +202,31 @@
   }
 
   async function carregarFuncionarios() {
-    const select = document.getElementById('funcionario-mecanico');
-    const anterior = select.value;
+    const busca = document.getElementById('funcionario-mecanico-busca');
+    const funcionarioId = document.getElementById('funcionario-mecanico');
+    const lista = document.getElementById('funcionarios-oficina-lista');
+    if (!busca || !funcionarioId || !lista) return;
+    const anterior = funcionarioId.value;
     const { data, error } = await window.db
       .from('funcionarios')
-      .select('id, cod_funcionario, nome_funcionario, is_mecanico, user_id')
+      .select('id, cod_funcionario, nome_funcionario, funcao_id, user_id')
       .order('nome_funcionario');
     if (error) {
-      select.innerHTML = '<option value="">Erro ao carregar funcionários</option>';
+      busca.value = '';
+      busca.placeholder = 'Erro ao carregar funcionários';
       mensagem('msg-mecanico', error.message, 'error');
       return;
     }
     funcionariosCache = data || [];
-    select.innerHTML = '<option value="">Selecione um funcionário...</option>' + funcionariosCache.map(funcionario =>
-      `<option value="${escapeHTML(funcionario.id)}" data-mecanico="${funcionario.is_mecanico}" data-user="${escapeHTML(funcionario.user_id || '')}">[${escapeHTML(funcionario.cod_funcionario)}] ${escapeHTML(funcionario.nome_funcionario)}${funcionario.user_id ? ' ✓' : ''}</option>`
+    lista.innerHTML = funcionariosCache.map(funcionario =>
+      `<option value="${escapeHTML(rotuloFuncionario(funcionario))}"></option>`
     ).join('');
-    select.onchange = aplicarSelecaoFuncionario;
-    if (anterior) select.value = anterior;
+    busca.oninput = aplicarSelecaoFuncionario;
+    busca.onchange = aplicarSelecaoFuncionario;
+    const selecionado = funcionariosCache.find(item => item.id === anterior);
+    busca.placeholder = 'Digite o nome do funcionário...';
+    busca.value = selecionado ? rotuloFuncionario(selecionado) : '';
+    funcionarioId.value = selecionado?.id || '';
     aplicarSelecaoFuncionario();
   }
 
@@ -191,11 +237,15 @@
         .select('id, descricao, created_at, status, veiculos(placa, modelo), mecanico_id, mecanico_funcionario:funcionarios!ordens_servico_mecanico_id_fkey(nome_funcionario), ordens_servico_mecanicos(funcionario_id, especialidade, mecanico:funcionarios!ordens_servico_mecanicos_funcionario_id_fkey(nome_funcionario, cod_funcionario)), itens_ordem_servico(id, quantidade, quantidade_utilizada, pecas(codigo, nome, unidade))')
         .eq('status', 'Pendente')
         .order('created_at', { ascending: true }),
-      window.db.from('funcionarios').select('id, cod_funcionario, nome_funcionario').eq('is_mecanico', true).order('nome_funcionario')
+      window.db.from('funcionarios').select('id, cod_funcionario, nome_funcionario, funcoes_oficina(nome)').not('funcao_id', 'is', null).order('nome_funcionario')
     ]);
 
     if (erroOrdens || erroMecanicos) {
-      container.innerHTML = '<p class="text-danger">Erro ao carregar OS ou mecânicos. Confira a migração do almoxarifado.</p>';
+      const detalhes = [
+        erroOrdens && `OS: ${erroOrdens.message}`,
+        erroMecanicos && `Equipe: ${erroMecanicos.message}`
+      ].filter(Boolean).join(' | ');
+      container.innerHTML = `<p class="text-danger">Erro ao carregar dados: ${escapeHTML(detalhes)}</p>`;
       return;
     }
     if (!ordens?.length) {
@@ -204,7 +254,7 @@
     }
 
     const mecanicoOptions = (mecanicos || []).map(mecanico =>
-      `<option value="${escapeHTML(mecanico.id)}">${escapeHTML(mecanico.nome_funcionario)} (${escapeHTML(mecanico.cod_funcionario)})</option>`
+      `<option value="${escapeHTML(mecanico.id)}" data-especialidade="${escapeHTML(mecanico.funcoes_oficina?.nome || '')}">${escapeHTML(mecanico.nome_funcionario)} (${escapeHTML(mecanico.cod_funcionario)})</option>`
     ).join('');
     const pecaOptions = pecasCache.filter(peca => Number(peca.saldo_estoque) > 0).map(peca =>
       `<option value="${escapeHTML(peca.id)}" data-saldo="${escapeHTML(peca.saldo_estoque)}">${escapeHTML(peca.codigo)} · ${escapeHTML(peca.nome)} (${Number(peca.saldo_estoque).toLocaleString('pt-BR')} ${escapeHTML(peca.unidade)})</option>`
@@ -218,15 +268,15 @@
       ).join('<br>') : 'Nenhuma peça liberada ainda.';
       const equipe = os.ordens_servico_mecanicos || [];
       const equipeHtml = equipe.length
-        ? equipe.map(item => `<span class="badge text-bg-light border me-1 mb-1">${escapeHTML(item.mecanico?.nome_funcionario || 'Mecânico')} · ${escapeHTML(item.especialidade)}</span>`).join('')
-        : '<span class="text-muted">Nenhum mecânico associado.</span>';
+        ? equipe.map(item => `<span class="badge text-bg-light border me-1 mb-1">${escapeHTML(item.mecanico?.nome_funcionario || 'Membro')} · ${escapeHTML(item.especialidade)}</span>`).join('')
+        : '<span class="text-muted">Nenhum membro associado.</span>';
       const linhasMecanicos = equipe.length
         ? equipe.map(item => `<div class="row g-2 align-items-end release-mechanic-line mb-2">
-            <div class="col-7"><label class="form-label small">Mecânico</label><select class="form-select release-mechanic" required><option value="">Selecione...</option>${mecanicoOptions}</select></div>
+            <div class="col-7"><label class="form-label small">Membro da equipe</label><select class="form-select release-mechanic" required><option value="">Selecione...</option>${mecanicoOptions}</select></div>
             <div class="col-5"><label class="form-label small">Especialidade</label><input class="form-control release-specialty" maxlength="80" required value="${escapeHTML(item.especialidade)}" placeholder="Ex.: Eletricista"></div>
           </div>`).join('')
         : `<div class="row g-2 align-items-end release-mechanic-line mb-2">
-            <div class="col-7"><label class="form-label small">Mecânico</label><select class="form-select release-mechanic" required><option value="">Selecione...</option>${mecanicoOptions}</select></div>
+            <div class="col-7"><label class="form-label small">Membro da equipe</label><select class="form-select release-mechanic" required><option value="">Selecione...</option>${mecanicoOptions}</select></div>
             <div class="col-5"><label class="form-label small">Especialidade</label><input class="form-control release-specialty" maxlength="80" required placeholder="Ex.: Eletricista"></div>
           </div>`;
       return `<article class="warehouse-release-card">
@@ -236,9 +286,9 @@
         <div class="small mb-2"><strong>Equipe:</strong><div>${equipeHtml}</div></div>
         <div class="warehouse-release-items"><strong>Peças liberadas</strong><br>${itensHtml}</div>
         <form class="warehouse-release-form" data-release-os="${escapeHTML(os.id)}">
-          <label class="form-label">Mecânicos e especialidades</label>
+          <label class="form-label">Equipe e especialidades</label>
           <div class="release-mechanics">${linhasMecanicos}</div>
-          <button type="button" class="btn btn-sm btn-outline-secondary btn-add-mechanic mb-2">Adicionar mecânico</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary btn-add-mechanic mb-2">Adicionar membro</button>
           <div class="release-lines d-flex flex-column gap-2"></div>
           <div class="d-flex gap-2 mt-2">
             <button type="button" class="btn btn-sm btn-outline-secondary btn-add-release" ${pecaOptions ? '' : 'disabled'}><i class="bi bi-plus-lg me-1"></i>Adicionar peça</button>
@@ -257,6 +307,13 @@
       });
     });
   }
+
+  document.getElementById('lista-os-liberacao').addEventListener('change', event => {
+    const select = event.target.closest('.release-mechanic');
+    if (!select) return;
+    const especialidade = select.selectedOptions[0]?.dataset.especialidade || '';
+    if (especialidade) select.closest('.release-mechanic-line').querySelector('.release-specialty').value = especialidade;
+  });
 
   document.getElementById('lista-os-liberacao').addEventListener('click', event => {
     const addMechanic = event.target.closest('.btn-add-mechanic');
@@ -292,11 +349,11 @@
       especialidade: linha.querySelector('.release-specialty').value.trim()
     }));
     if (mecanicos.some(item => !item.funcionario_id || !item.especialidade)) {
-      form.querySelector('.form-feedback').textContent = 'Selecione cada mecânico e informe sua especialidade.';
+      form.querySelector('.form-feedback').textContent = 'Selecione cada membro e informe sua especialidade.';
       return;
     }
     if (new Set(mecanicos.map(item => item.funcionario_id)).size !== mecanicos.length) {
-      form.querySelector('.form-feedback').textContent = 'Não repita o mesmo mecânico na equipe.';
+      form.querySelector('.form-feedback').textContent = 'Não repita o mesmo membro na equipe.';
       return;
     }
     const itens = [];
@@ -380,15 +437,43 @@
   document.getElementById('form-mecanico').addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = document.getElementById('btn-salvar-mecanico');
+    const funcionarioId = document.getElementById('funcionario-mecanico').value;
+    if (!funcionarioId) {
+      mensagem('msg-mecanico', 'Digite e selecione um funcionário cadastrado na lista.', 'error');
+      document.getElementById('funcionario-mecanico-busca').focus();
+      return;
+    }
+    const funcaoSelecionada = document.getElementById('funcao-oficina').value;
     button.disabled = true;
-    const { error } = await window.db.rpc('definir_funcionario_mecanico', {
-      p_funcionario_id: document.getElementById('funcionario-mecanico').value,
-      p_is_mecanico: document.getElementById('status-mecanico').value === 'true'
+    mensagem('msg-mecanico', '', '');
+    const { error } = await window.db.rpc('definir_funcionario_funcao', {
+      p_funcionario_id: funcionarioId,
+      p_funcao_id: funcaoSelecionada ? Number(funcaoSelecionada) : null
     });
     if (error) mensagem('msg-mecanico', error.message, 'error');
     else {
       mensagem('msg-mecanico', 'Função atualizada.', 'success');
       await carregarFuncionarios();
+    }
+    button.disabled = false;
+  });
+  document.getElementById('btn-nova-funcao').addEventListener('click', async () => {
+    const button = document.getElementById('btn-nova-funcao');
+    const input = document.getElementById('nova-funcao');
+    const nome = input.value.trim();
+    if (!nome) {
+      mensagem('msg-funcao', 'Informe o nome da função.', 'error');
+      return;
+    }
+    button.disabled = true;
+    mensagem('msg-funcao', '', '');
+    const { data, error } = await window.db.rpc('criar_funcao_oficina', { p_nome: nome });
+    if (error) mensagem('msg-funcao', error.message, 'error');
+    else {
+      input.value = '';
+      await carregarFuncoes();
+      document.getElementById('funcao-oficina').value = String(data);
+      mensagem('msg-funcao', `Função "${nome}" disponível. Selecione o funcionário e clique em Salvar.`, 'success');
     }
     button.disabled = false;
   });
@@ -418,7 +503,10 @@
   });
 
   const cargas = [carregarPecas(), carregarMovimentacoes(), carregarCustosPorVeiculo()];
-  if (perfil.role === 'admin') cargas.push(carregarFuncionarios(), carregarUsuarios());
+  if (perfil.role === 'admin') {
+    await Promise.all([carregarFuncoes(), carregarUsuarios()]);
+    cargas.push(carregarFuncionarios());
+  }
   await Promise.all(cargas);
   await carregarOrdensLiberacao();
 })();

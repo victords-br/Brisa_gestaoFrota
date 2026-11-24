@@ -77,10 +77,18 @@
     <section class="warehouse-panel warehouse-mechanics d-none" id="painel-mecanicos">
       <div class="panel-heading"><div><span class="panel-icon panel-icon-coral"><i class="bi bi-person-gear"></i></span><h2>Equipe de manutenção</h2></div></div>
       <form id="form-mecanico" class="row g-3 align-items-end">
-        <div class="col-12 col-md-7"><label class="form-label" for="funcionario-mecanico">Funcionário</label><select class="form-select" id="funcionario-mecanico" required><option value="">Carregando funcionários...</option></select></div>
-        <div class="col-12 col-md-3"><label class="form-label" for="status-mecanico">Função na oficina</label><select class="form-select" id="status-mecanico"><option value="true">Mecânico</option><option value="false">Outro funcionário</option></select></div>
+        <div class="col-12 col-md-7">
+          <label class="form-label" for="funcionario-mecanico-busca">Funcionário</label>
+          <input class="form-control" id="funcionario-mecanico-busca" list="funcionarios-oficina-lista" autocomplete="off" placeholder="Digite o nome do funcionário..." required>
+          <datalist id="funcionarios-oficina-lista"></datalist>
+          <input type="hidden" id="funcionario-mecanico">
+        </div>
+        <div class="col-12 col-md-3"><label class="form-label" for="funcao-oficina">Função na oficina</label><select class="form-select" id="funcao-oficina"><option value="">Sem função (fora da manutenção)</option></select></div>
         <div class="col-12 col-md-2 d-flex align-items-center gap-2"><button class="btn btn-warehouse w-100" type="submit" id="btn-salvar-mecanico">Salvar</button></div>
         <div class="col-12"><span class="form-feedback" id="msg-mecanico" aria-live="polite"></span></div>
+        <div class="col-12 col-md-6"><label class="form-label" for="nova-funcao">Cadastrar nova função</label><input class="form-control" id="nova-funcao" maxlength="40" placeholder="Ex.: Chapista, Vidraceiro..."></div>
+        <div class="col-12 col-md-3 d-flex align-items-center gap-2"><button class="btn btn-outline-secondary w-100" type="button" id="btn-nova-funcao">Adicionar função</button></div>
+        <div class="col-12"><span class="form-feedback" id="msg-funcao" aria-live="polite"></span></div>
         <div class="col-12"><hr class="my-1"></div>
         <div class="col-12 col-md-7">
           <label class="form-label" for="usuario-vinculo">Usuário do app (login)</label>
@@ -115,6 +123,6 @@
 
   <script src="assets/bootstrap/js/bootstrap.min.js"></script>
   <script src="assets/js/supabase-config.js"></script>
-  <script src="assets/js/almoxarifado.js"></script>
+  <script src="assets/js/almoxarifado.js?v=20261124-3"></script>
 </body>
 </html>

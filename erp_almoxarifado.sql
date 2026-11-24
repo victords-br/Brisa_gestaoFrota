@@ -5,8 +5,63 @@ ALTER TABLE public.profiles
   ADD CONSTRAINT profiles_role_check
   CHECK (role = ANY (ARRAY['motorista', 'admin', 'porteiro', 'manutencao']));
 
+-- Funções da oficina (cadastro de referência da equipe de manutenção).
+CREATE TABLE IF NOT EXISTS public.funcoes_oficina (
+  id bigserial PRIMARY KEY,
+  nome text NOT NULL UNIQUE,
+  ativo boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT funcoes_oficina_nome_check CHECK (length(trim(nome)) > 0)
+);
+
+INSERT INTO public.funcoes_oficina (nome) VALUES
+  ('Mecânico'),
+  ('Eletricista'),
+  ('Chapista'),
+  ('Funileiro'),
+  ('Borracheiro'),
+  ('Soldador')
+ON CONFLICT (nome) DO NOTHING;
+
+-- A função define a equipe; is_mecanico permanece temporariamente por
+-- compatibilidade com policies e RPCs antigas instaladas no banco.
+ALTER TABLE public.funcionarios
+  ADD COLUMN IF NOT EXISTS funcao_id bigint REFERENCES public.funcoes_oficina (id) ON DELETE SET NULL;
+
 ALTER TABLE public.funcionarios
   ADD COLUMN IF NOT EXISTS is_mecanico boolean NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS funcionarios_funcao_idx
+  ON public.funcionarios (funcao_id);
+
+UPDATE public.funcionarios
+SET funcao_id = (SELECT id FROM public.funcoes_oficina WHERE nome = 'Mecânico')
+WHERE funcao_id IS NULL AND is_mecanico;
+
+UPDATE public.funcionarios
+SET is_mecanico = (funcao_id IS NOT NULL)
+WHERE is_mecanico IS DISTINCT FROM (funcao_id IS NOT NULL);
+
+CREATE OR REPLACE FUNCTION public.sincronizar_flag_mecanico_legado()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.is_mecanico := NEW.funcao_id IS NOT NULL;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS funcionarios_sincronizar_flag_mecanico
+  ON public.funcionarios;
+CREATE TRIGGER funcionarios_sincronizar_flag_mecanico
+  BEFORE INSERT OR UPDATE OF funcao_id ON public.funcionarios
+  FOR EACH ROW
+  EXECUTE FUNCTION public.sincronizar_flag_mecanico_legado();
+
+REVOKE ALL ON FUNCTION public.sincronizar_flag_mecanico_legado()
+  FROM PUBLIC, anon, authenticated;
 
 -- Vínculo do funcionário (RH) com o usuário do app (auth.users).
 -- Permite a RPC validar_checklist_portaria resolver o autor do checklist
@@ -233,6 +288,16 @@ CREATE POLICY ordens_servico_mecanicos_manutencao_select ON public.ordens_servic
     WHERE p.id = auth.uid() AND p.role IN ('admin', 'manutencao')
   ));
 
+ALTER TABLE public.funcoes_oficina ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS funcoes_oficina_manutencao_select ON public.funcoes_oficina;
+CREATE POLICY funcoes_oficina_manutencao_select ON public.funcoes_oficina
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.id = auth.uid() AND p.role IN ('admin', 'manutencao')
+  ));
+
 REVOKE INSERT, UPDATE ON public.pecas FROM authenticated;
 GRANT SELECT ON public.pecas TO authenticated;
 GRANT SELECT ON public.ordens_servico TO authenticated;
@@ -244,6 +309,9 @@ GRANT SELECT ON public.itens_ordem_servico, public.movimentacoes_estoque TO auth
 REVOKE INSERT, UPDATE, DELETE ON public.itens_ordem_servico, public.movimentacoes_estoque FROM authenticated;
 REVOKE ALL ON public.ordens_servico_mecanicos FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.ordens_servico_mecanicos TO authenticated;
+REVOKE ALL ON public.funcoes_oficina FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.funcoes_oficina TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.funcoes_oficina_id_seq TO authenticated;
 GRANT USAGE, SELECT ON SEQUENCE public.pecas_id_seq TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.registrar_entrada_estoque(
@@ -300,9 +368,12 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.definir_funcionario_mecanico(
+-- Define a função de oficina do funcionário. funcao_id NULL = fora da manutenção.
+DROP FUNCTION IF EXISTS public.definir_funcionario_mecanico(uuid, boolean);
+
+CREATE OR REPLACE FUNCTION public.definir_funcionario_funcao(
   p_funcionario_id uuid,
-  p_is_mecanico boolean
+  p_funcao_id bigint
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -317,19 +388,58 @@ BEGIN
   WHERE id = auth.uid();
 
   IF COALESCE(v_role, '') <> 'admin' THEN
-    RAISE EXCEPTION 'Somente administradores podem gerenciar mecânicos';
+    RAISE EXCEPTION 'Somente administradores podem gerenciar a equipe da manutenção';
   END IF;
-  IF p_is_mecanico IS NULL THEN
-    RAISE EXCEPTION 'Informe se o funcionário é mecânico';
+  IF p_funcionario_id IS NULL THEN
+    RAISE EXCEPTION 'Selecione um funcionário';
+  END IF;
+  IF p_funcao_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.funcoes_oficina WHERE id = p_funcao_id AND ativo
+  ) THEN
+    RAISE EXCEPTION 'Função de oficina não encontrada';
   END IF;
 
   UPDATE public.funcionarios
-  SET is_mecanico = p_is_mecanico
+  SET funcao_id = p_funcao_id
   WHERE id = p_funcionario_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Funcionário não encontrado';
   END IF;
+END;
+$$;
+
+-- Cadastra uma função de oficina e devolve o id (reaproveita se o nome já existir).
+CREATE OR REPLACE FUNCTION public.criar_funcao_oficina(p_nome text)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_role text;
+  v_id bigint;
+  v_nome text;
+BEGIN
+  SELECT role INTO v_role
+  FROM public.profiles
+  WHERE id = auth.uid();
+
+  IF COALESCE(v_role, '') <> 'admin' THEN
+    RAISE EXCEPTION 'Somente administradores podem cadastrar funções de oficina';
+  END IF;
+
+  v_nome := NULLIF(trim(p_nome), '');
+  IF v_nome IS NULL THEN
+    RAISE EXCEPTION 'Informe o nome da função';
+  END IF;
+
+  INSERT INTO public.funcoes_oficina (nome)
+  VALUES (v_nome)
+  ON CONFLICT (nome) DO UPDATE SET ativo = true
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
 END;
 $$;
 
@@ -594,10 +704,10 @@ BEGIN
   v_mecanico_id := (p_mecanicos->0->>'funcionario_id')::uuid;
   SELECT nome_funcionario INTO v_mecanico_nome
   FROM public.funcionarios
-  WHERE id = v_mecanico_id AND is_mecanico;
+  WHERE id = v_mecanico_id AND funcao_id IS NOT NULL;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'Selecione mecânicos ativos no cadastro de funcionários';
+    RAISE EXCEPTION 'Selecione funcionários da equipe da manutenção';
   END IF;
 
   FOR v_mecanico IN SELECT value FROM jsonb_array_elements(p_mecanicos)
@@ -607,9 +717,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (
       SELECT 1 FROM public.funcionarios
-      WHERE id = (v_mecanico->>'funcionario_id')::uuid AND is_mecanico
+      WHERE id = (v_mecanico->>'funcionario_id')::uuid AND funcao_id IS NOT NULL
     ) THEN
-      RAISE EXCEPTION 'Um dos funcionários selecionados não está marcado como mecânico';
+      RAISE EXCEPTION 'Um dos funcionários selecionados não pertence à equipe da manutenção';
     END IF;
 
     INSERT INTO public.ordens_servico_mecanicos (
@@ -819,7 +929,8 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.registrar_entrada_estoque(bigint, numeric, numeric, text) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.definir_funcionario_mecanico(uuid, boolean) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.definir_funcionario_funcao(uuid, bigint) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.criar_funcao_oficina(text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.listar_usuarios_app() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.definir_funcionario_vinculo(uuid, uuid) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.listar_checklists_portaria() FROM PUBLIC, anon;
@@ -827,7 +938,8 @@ REVOKE ALL ON FUNCTION public.validar_checklist_portaria(bigint, boolean, uuid, 
 REVOKE ALL ON FUNCTION public.registrar_saida_estoque_os(uuid, jsonb, jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.finalizar_ordem_servico(uuid, text, jsonb, jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.registrar_entrada_estoque(bigint, numeric, numeric, text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.definir_funcionario_mecanico(uuid, boolean) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.definir_funcionario_funcao(uuid, bigint) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.criar_funcao_oficina(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.listar_usuarios_app() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.definir_funcionario_vinculo(uuid, uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.listar_checklists_portaria() TO authenticated;
@@ -837,3 +949,5 @@ GRANT EXECUTE ON FUNCTION public.finalizar_ordem_servico(uuid, text, jsonb, json
 
 -- Necessário apenas se a leitura de funcionarios for por coluna (grants coluna a coluna).
 GRANT SELECT (user_id) ON public.funcionarios TO authenticated;
+GRANT SELECT (funcao_id) ON public.funcionarios TO authenticated;
+GRANT SELECT (is_mecanico) ON public.funcionarios TO authenticated;
