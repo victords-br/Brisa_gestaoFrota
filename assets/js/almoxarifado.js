@@ -279,9 +279,10 @@
             <div class="col-7"><label class="form-label small">Membro da equipe</label><select class="form-select release-mechanic" required><option value="">Selecione...</option>${mecanicoOptions}</select></div>
             <div class="col-5"><label class="form-label small">Especialidade</label><input class="form-control release-specialty" maxlength="80" required placeholder="Ex.: Eletricista"></div>
           </div>`;
+      const dataAbertura = os.created_at ? new Date(os.created_at).toLocaleString('pt-BR') : '—';
       return `<article class="warehouse-release-card">
         <h3>${escapeHTML(placa)}</h3>
-        <p class="small text-muted mb-1">OS #${escapeHTML(String(os.id).slice(-8))}</p>
+        <p class="small text-muted mb-1">OS #${escapeHTML(String(os.id).slice(-8))} · Aberta em ${escapeHTML(dataAbertura)}</p>
         <p class="small mb-2">${escapeHTML(os.descricao)}</p>
         <div class="small mb-2"><strong>Equipe:</strong><div>${equipeHtml}</div></div>
         <div class="warehouse-release-items"><strong>Peças liberadas</strong><br>${itensHtml}</div>
