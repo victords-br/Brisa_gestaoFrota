@@ -882,6 +882,22 @@ BEGIN
     RAISE EXCEPTION 'A confirmação contém peça não liberada para esta OS';
   END IF;
 
+  -- Toda peça liberada precisa ter a quantidade utilizada confirmada explicitamente.
+  -- Impede concluir a OS apenas com as horas do mecânico, devolvendo peças sem conferência.
+  IF EXISTS (
+    SELECT 1
+    FROM public.itens_ordem_servico liberado
+    WHERE liberado.ordem_servico_id = p_ordem_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(p_itens) AS item
+        WHERE (item->>'item_id')::bigint = liberado.id
+          AND NULLIF(item->>'quantidade_utilizada', '') IS NOT NULL
+      )
+  ) THEN
+    RAISE EXCEPTION 'Confirme a quantidade utilizada de todas as peças liberadas antes de concluir a OS';
+  END IF;
+
   FOR v_item IN
     SELECT id, peca_id, quantidade, custo_unitario
     FROM public.itens_ordem_servico

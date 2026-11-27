@@ -228,7 +228,7 @@
     const itensHtml = itensLiberados.length ? itensLiberados.map(item => `
       <div class="row g-2 align-items-center mb-2 linha-confirmacao-peca" data-item-id="${escapeHTML(item.id)}">
         <div class="col-7"><strong>${escapeHTML(item.pecas?.nome || 'Peça')}</strong><small class="d-block text-muted">Liberada: ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHTML(item.pecas?.unidade || '')}</small></div>
-        <div class="col-5"><label class="visually-hidden" for="usada-${escapeHTML(item.id)}">Quantidade utilizada</label><input id="usada-${escapeHTML(item.id)}" class="form-control quantidade-utilizada" type="number" min="0" max="${escapeHTML(item.quantidade)}" step="0.001" value="0" aria-label="Quantidade utilizada"></div>
+        <div class="col-5"><label class="visually-hidden" for="usada-${escapeHTML(item.id)}">Quantidade utilizada</label><input id="usada-${escapeHTML(item.id)}" class="form-control quantidade-utilizada" type="number" min="0" max="${escapeHTML(item.quantidade)}" step="0.001" required placeholder="Qtd. utilizada" aria-label="Quantidade utilizada"></div>
       </div>`).join('') : '<p class="text-muted mb-0">Nenhuma peça liberada para esta OS. Ela será concluída sem consumo de peças.</p>';
     const dataLocal = (valor) => {
       if (!valor) return '';
@@ -258,8 +258,13 @@
             <div class="modal-body">
               <form id="form-concluir-os">
                 <div class="mb-3">
-                  <span class="form-label fw-bold d-block">Equipe e horas trabalhadas</span>
-                  <p class="small text-muted">Informe o horário de início e fim de cada mecânico. As horas são calculadas individualmente e somadas na OS.</p>
+                  <label class="form-label fw-bold">1. Confirmar quantidade utilizada das peças</label>
+                  <p class="small text-muted">Informe a quantidade utilizada de cada peça liberada. Use 0 quando a peça não foi consumida — o restante volta ao estoque. Este passo é obrigatório para concluir a OS.</p>
+                  <div id="itens-pecas-os">${itensHtml}</div>
+                </div>
+                <div class="mb-3">
+                  <span class="form-label fw-bold d-block">2. Equipe e horas trabalhadas</span>
+                  <p class="small text-muted">Informe o horário de início e fim de cada membro. As horas são calculadas individualmente e somadas na OS.</p>
                   <div id="equipe-horas-os">${equipeHtml}</div>
                   <strong>Total da equipe: <span id="total-horas-equipe">0,00 h</span></strong>
                 </div>
@@ -267,11 +272,6 @@
                   <label class="form-label fw-bold">Observações do Reparo</label>
                   <textarea class="form-control" id="mecanico-obs" rows="3" placeholder="Peças trocadas, serviço realizado..."></textarea>
                 </div>
-                <div class="mb-2 d-flex justify-content-between align-items-center">
-                  <label class="form-label fw-bold mb-0">Confirmar quantidade utilizada</label>
-                </div>
-                <p class="small text-muted">O que não foi utilizado será devolvido ao estoque.</p>
-                <div id="itens-pecas-os">${itensHtml}</div>
                 <button type="submit" class="btn btn-success w-100 fw-bold mt-3" id="btn-concluir-os">Confirmar uso e concluir OS</button>
               </form>
             </div>
@@ -307,17 +307,24 @@
     modalEl.querySelector('#form-concluir-os').addEventListener('submit', async (e) => {
       e.preventDefault();
       const obs = document.getElementById('mecanico-obs').value.trim();
-      const itens = [...modalEl.querySelectorAll('#itens-pecas-os .linha-confirmacao-peca')].map(linha => ({
-        item_id: Number(linha.dataset.itemId),
-        quantidade_utilizada: Number(linha.querySelector('.quantidade-utilizada').value)
-      }));
+      const itens = [...modalEl.querySelectorAll('#itens-pecas-os .linha-confirmacao-peca')].map(linha => {
+        const campo = linha.querySelector('.quantidade-utilizada');
+        return {
+          item_id: Number(linha.dataset.itemId),
+          quantidade_utilizada: campo.value.trim()
+        };
+      });
       for (const item of itens) {
         const linha = modalEl.querySelector(`[data-item-id="${item.item_id}"]`);
-        const limite = Number(linha.querySelector('.quantidade-utilizada').max);
-        if (!Number.isFinite(item.quantidade_utilizada) || item.quantidade_utilizada < 0 || item.quantidade_utilizada > limite) {
-          alert('Informe uma quantidade utilizada válida, sem ultrapassar o que foi liberado.');
+        const campo = linha.querySelector('.quantidade-utilizada');
+        const limite = Number(campo.max);
+        const valor = Number(item.quantidade_utilizada);
+        if (item.quantidade_utilizada === '' || !Number.isFinite(valor) || valor < 0 || valor > limite) {
+          alert('Confirme a quantidade utilizada de cada peça liberada (informe 0 se não houve consumo). A OS só é concluída com as peças conferidas e as horas do mecânico informadas.');
+          campo.focus();
           return;
         }
+        item.quantidade_utilizada = valor;
       }
       const mecanicos = [...modalEl.querySelectorAll('.linha-horas-mecanico')].map(linha => {
         const inicio = linha.querySelector('.inicio-mecanico').value;
